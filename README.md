@@ -225,16 +225,29 @@ make
 ```
 This compiles the bootloader and kernel, and creates a bootable floppy disk image at `build/pweos.img`.
 
-### Run in QEMU (GUI window)
+### Run in QEMU (Resizable GUI window)
 ```bash
 make run
 ```
+Launches QEMU with `-display cocoa,zoom-to-fit=on` on macOS. The window can be freely resized, dragged by its corner, or maximized using the green window button to scale the VGA screen to any size! You can also press `Cmd+F` or `Ctrl+Alt+F` to toggle full screen.
+
+### Run in Fullscreen
+```bash
+make run-fullscreen
+```
+Launches QEMU directly in full screen mode (`-display cocoa,zoom-to-fit=on,full-screen=on`).
+
+### Run in Terminal with Curses (Large Terminal Mode)
+```bash
+make run-curses
+```
+Renders the OS display directly inside your current terminal window using curses. The display scales to match your terminal window and font size.
 
 ### Run in QEMU with Serial Port Output
 ```bash
 make run-serial
 ```
-Outputs both to the graphical VGA window and mirrors all text to your host terminal via COM1.
+Outputs both to the resizable graphical VGA window and mirrors all text to your host terminal via COM1.
 
 ### Run Headless (CLI only)
 ```bash

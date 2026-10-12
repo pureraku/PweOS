@@ -3,6 +3,15 @@ CC = clang --target=i686-unknown-none-elf
 LD = ld.lld
 QEMU = qemu-system-i386
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    QEMU_DISPLAY ?= -display cocoa,zoom-to-fit=on
+    QEMU_FULLSCREEN ?= -display cocoa,zoom-to-fit=on,full-screen=on
+else
+    QEMU_DISPLAY ?= -display default
+    QEMU_FULLSCREEN ?= -full-screen
+endif
+
 CFLAGS = -ffreestanding -m32 -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -fno-pie -fno-pic -fno-stack-protector -fno-builtin -Wall -Wextra -O2 -Ikernel
 LDFLAGS = -m elf_i386 --oformat binary -T kernel/linker.ld
 
@@ -16,7 +25,7 @@ KERNEL_C_SRCS = $(wildcard kernel/*.c) $(wildcard kernel/**/*.c)
 KERNEL_ASM_OBJS = $(patsubst kernel/%.asm, $(BUILD)/%.asm.o, $(KERNEL_ASM_SRCS))
 KERNEL_C_OBJS = $(patsubst kernel/%.c, $(BUILD)/%.c.o, $(KERNEL_C_SRCS))
 
-.PHONY: all run run-serial run-headless clean
+.PHONY: all run run-fullscreen run-curses run-serial run-headless clean
 
 all: $(IMAGE)
 
@@ -43,10 +52,16 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 	truncate -s 1440K $(IMAGE)
 
 run: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_DISPLAY)
+
+run-fullscreen: $(IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_FULLSCREEN)
+
+run-curses: $(IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display curses
 
 run-serial: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -serial stdio
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_DISPLAY) -serial stdio
 
 run-headless: $(IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display none -serial stdio
