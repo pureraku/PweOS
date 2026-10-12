@@ -21,7 +21,7 @@ KERNEL_C_OBJS = $(patsubst kernel/%.c, $(BUILD)/%.c.o, $(KERNEL_C_SRCS))
 all: $(IMAGE)
 
 $(BUILD):
-	mkdir -p $(BUILD)/arch $(BUILD)/drivers $(BUILD)/lib $(BUILD)/shell
+	mkdir -p $(BUILD)/arch $(BUILD)/drivers $(BUILD)/lib $(BUILD)/shell $(BUILD)/mm
 
 $(BOOT_BIN): boot/boot.asm | $(BUILD)
 	$(ASM) $< -f bin -o $@

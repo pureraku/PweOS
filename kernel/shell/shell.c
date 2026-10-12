@@ -2,6 +2,7 @@
 #include "drivers/vga.h"
 #include "drivers/timer.h"
 #include "drivers/keyboard.h"
+#include "mm/heap.h"
 #include "arch/io.h"
 #include "lib/printf.h"
 #include "lib/string.h"
@@ -20,6 +21,7 @@ static void cmd_peek(int argc, char **argv);
 static void cmd_reboot(int argc, char **argv);
 static void cmd_panic(int argc, char **argv);
 static void cmd_about(int argc, char **argv);
+static void cmd_meminfo(int argc, char **argv);
 
 struct shell_command {
     const char *name;
@@ -34,6 +36,7 @@ static const struct shell_command commands[] = {
     {"version", "Display PweOS kernel version and arch",  cmd_version},
     {"uname",   "Display operating system information",   cmd_version},
     {"uptime",  "Display system uptime and timer ticks",  cmd_uptime},
+    {"meminfo", "Display kernel heap memory statistics",   cmd_meminfo},
     {"calc",    "Evaluate arithmetic expression: a op b", cmd_calc},
     {"color",   "Set terminal color: color <fg> [bg]",    cmd_color},
     {"sleep",   "Delay execution for N seconds",          cmd_sleep},
@@ -88,6 +91,22 @@ static void cmd_uptime(int argc, char **argv) {
     uint32_t rem_secs = secs % 60;
 
     printf("Uptime: %u min, %u sec (%u timer ticks elapsed at 100 Hz)\n", mins, rem_secs, ticks);
+}
+
+static void cmd_meminfo(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    heap_stats_t stats;
+    heap_get_stats(&stats);
+
+    printf("\nKernel Heap Memory Statistics:\n");
+    printf("----------------------------------------------------\n");
+    printf("  Total Heap Capacity : %u KB (%u bytes)\n", (unsigned int)(stats.total_bytes / 1024), (unsigned int)stats.total_bytes);
+    printf("  Used Memory         : %u bytes\n", (unsigned int)stats.used_bytes);
+    printf("  Free Memory         : %u bytes\n", (unsigned int)stats.free_bytes);
+    printf("  Active Allocations  : %u\n", (unsigned int)stats.num_allocations);
+    printf("  Total Heap Blocks   : %u\n", (unsigned int)stats.num_blocks);
+    printf("----------------------------------------------------\n");
 }
 
 static void cmd_calc(int argc, char **argv) {
