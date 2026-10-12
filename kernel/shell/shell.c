@@ -32,6 +32,7 @@ static void cmd_cat(int argc, char **argv);
 static void cmd_touch(int argc, char **argv);
 static void cmd_write(int argc, char **argv);
 static void cmd_rm(int argc, char **argv);
+static void cmd_history(int argc, char **argv);
 
 struct shell_command {
     const char *name;
@@ -49,6 +50,7 @@ static const struct shell_command commands[] = {
     {"date",    "Display real-time clock (CMOS RTC) date",cmd_date},
     {"cpuinfo", "Display CPU hardware details via CPUID",  cmd_cpuinfo},
     {"meminfo", "Display kernel heap memory statistics",   cmd_meminfo},
+    {"history", "Display command history buffer",         cmd_history},
     {"ls",      "List files in in-memory RAM filesystem", cmd_ls},
     {"cat",     "Display file contents: cat <filename>",  cmd_cat},
     {"touch",   "Create empty file: touch <filename>",    cmd_touch},
@@ -437,8 +439,105 @@ void shell_init(void) {
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 }
 
+#define SHELL_HISTORY_MAX 16
+static char shell_history[SHELL_HISTORY_MAX][SHELL_MAX_LINE];
+static size_t shell_history_count = 0;
+
+static void history_add(const char *cmd) {
+    if (!cmd || strlen(cmd) == 0) return;
+    if (shell_history_count > 0 && strcmp(shell_history[shell_history_count - 1], cmd) == 0) {
+        return; // Avoid adjacent duplicate entries
+    }
+    if (shell_history_count < SHELL_HISTORY_MAX) {
+        strcpy(shell_history[shell_history_count++], cmd);
+    } else {
+        for (size_t i = 0; i < SHELL_HISTORY_MAX - 1; i++) {
+            strcpy(shell_history[i], shell_history[i + 1]);
+        }
+        strcpy(shell_history[SHELL_HISTORY_MAX - 1], cmd);
+    }
+}
+
+static void cmd_history(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    printf("\nCommand History:\n");
+    printf("----------------------------------------------------\n");
+    if (shell_history_count == 0) {
+        printf("  (no commands in history)\n");
+    } else {
+        for (size_t i = 0; i < shell_history_count; i++) {
+            printf("  %2u  %s\n", (unsigned int)(i + 1), shell_history[i]);
+        }
+    }
+    printf("----------------------------------------------------\n");
+}
+
+static size_t shell_readline(char *buffer, size_t max_len) {
+    if (!buffer || max_len == 0) return 0;
+    size_t index = 0;
+    int history_pos = (int)shell_history_count;
+
+    for (;;) {
+        char c = keyboard_getchar();
+
+        if (c == '\n' || c == '\r') {
+            vga_putchar('\n');
+            buffer[index] = '\0';
+            return index;
+        } else if (c == '\b') {
+            if (index > 0) {
+                index--;
+                vga_putchar('\b');
+            }
+        } else if (c == KEY_UP) {
+            if (history_pos > 0) {
+                history_pos--;
+                while (index > 0) {
+                    vga_putchar('\b');
+                    index--;
+                }
+                const char *hist = shell_history[history_pos];
+                size_t len = strlen(hist);
+                for (size_t i = 0; i < len && i < max_len - 1; i++) {
+                    buffer[i] = hist[i];
+                    vga_putchar(hist[i]);
+                }
+                index = len;
+            }
+        } else if (c == KEY_DOWN) {
+            if (history_pos + 1 < (int)shell_history_count) {
+                history_pos++;
+                while (index > 0) {
+                    vga_putchar('\b');
+                    index--;
+                }
+                const char *hist = shell_history[history_pos];
+                size_t len = strlen(hist);
+                for (size_t i = 0; i < len && i < max_len - 1; i++) {
+                    buffer[i] = hist[i];
+                    vga_putchar(hist[i]);
+                }
+                index = len;
+            } else if (history_pos < (int)shell_history_count) {
+                history_pos = (int)shell_history_count;
+                while (index > 0) {
+                    vga_putchar('\b');
+                    index--;
+                }
+            }
+        } else if ((unsigned char)c >= 32 && (unsigned char)c <= 126) {
+            if (index + 1 < max_len) {
+                buffer[index++] = c;
+                vga_putchar(c);
+            }
+        }
+    }
+}
+
 void shell_run(void) {
     char line_buffer[SHELL_MAX_LINE];
+    char saved_line[SHELL_MAX_LINE];
     char *argv[SHELL_MAX_ARGS];
 
     for (;;) {
@@ -449,11 +548,15 @@ void shell_run(void) {
         printf("> ");
         vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
-        // Read user input line
-        size_t len = keyboard_readline(line_buffer, sizeof(line_buffer));
+        // Read user input line with history support
+        size_t len = shell_readline(line_buffer, sizeof(line_buffer));
         if (len == 0) {
             continue;
         }
+
+        // Save raw command to history
+        strcpy(saved_line, line_buffer);
+        history_add(saved_line);
 
         // Parse line into argc, argv
         int argc = 0;

@@ -17,6 +17,7 @@ static volatile size_t kb_tail = 0;
 
 static bool shift_pressed = false;
 static bool caps_lock = false;
+static bool extended_prefix = false;
 
 // Scancode Set 1 standard US QWERTY mapping
 static const char scancode_ascii_nomod[128] = {
@@ -50,6 +51,22 @@ static void buffer_push(char c) {
 static void keyboard_callback(registers_t *regs) {
     (void)regs;
     uint8_t scancode = inb(KEYBOARD_DATA_PORT);
+
+    if (scancode == 0xE0) {
+        extended_prefix = true;
+        return;
+    }
+
+    if (extended_prefix) {
+        extended_prefix = false;
+        if (scancode & 0x80) return; // Release
+
+        if (scancode == 0x48)      buffer_push(KEY_UP);
+        else if (scancode == 0x50) buffer_push(KEY_DOWN);
+        else if (scancode == 0x4B) buffer_push(KEY_LEFT);
+        else if (scancode == 0x4D) buffer_push(KEY_RIGHT);
+        return;
+    }
 
     // Key release (break code)
     if (scancode & 0x80) {
@@ -94,6 +111,7 @@ void keyboard_init(void) {
     kb_tail = 0;
     shift_pressed = false;
     caps_lock = false;
+    extended_prefix = false;
 
     // Register IRQ1 handler (vector 33)
     isr_install_handler(33, keyboard_callback);
@@ -118,6 +136,20 @@ char keyboard_getchar(void) {
         // First check serial port
         if (inb(COM1_LSR_PORT) & 0x01) {
             char c = (char)inb(COM1_DATA_PORT);
+            if (c == 0x1B) { // ANSI escape sequence
+                if (inb(COM1_LSR_PORT) & 0x01) {
+                    char next = (char)inb(COM1_DATA_PORT);
+                    if (next == '[') {
+                        if (inb(COM1_LSR_PORT) & 0x01) {
+                            char code = (char)inb(COM1_DATA_PORT);
+                            if (code == 'A') return KEY_UP;
+                            if (code == 'B') return KEY_DOWN;
+                            if (code == 'C') return KEY_RIGHT;
+                            if (code == 'D') return KEY_LEFT;
+                        }
+                    }
+                }
+            }
             if (c == '\r') c = '\n';
             if (c == 127)  c = '\b'; // Map DEL to backspace
             return c;
