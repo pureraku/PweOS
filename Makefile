@@ -3,7 +3,7 @@ CC = clang --target=i686-unknown-none-elf
 LD = ld.lld
 QEMU = qemu-system-i386
 
-CFLAGS = -ffreestanding -m32 -fno-pie -fno-pic -fno-stack-protector -fno-builtin -Wall -Wextra -O2 -Ikernel
+CFLAGS = -ffreestanding -m32 -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -fno-pie -fno-pic -fno-stack-protector -fno-builtin -Wall -Wextra -O2 -Ikernel
 LDFLAGS = -m elf_i386 --oformat binary -T kernel/linker.ld
 
 BUILD = build
