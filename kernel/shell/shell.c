@@ -2,6 +2,7 @@
 #include "drivers/vga.h"
 #include "drivers/timer.h"
 #include "drivers/keyboard.h"
+#include "drivers/rtc.h"
 #include "mm/heap.h"
 #include "arch/io.h"
 #include "lib/printf.h"
@@ -22,6 +23,7 @@ static void cmd_reboot(int argc, char **argv);
 static void cmd_panic(int argc, char **argv);
 static void cmd_about(int argc, char **argv);
 static void cmd_meminfo(int argc, char **argv);
+static void cmd_date(int argc, char **argv);
 
 struct shell_command {
     const char *name;
@@ -36,6 +38,7 @@ static const struct shell_command commands[] = {
     {"version", "Display PweOS kernel version and arch",  cmd_version},
     {"uname",   "Display operating system information",   cmd_version},
     {"uptime",  "Display system uptime and timer ticks",  cmd_uptime},
+    {"date",    "Display real-time clock (CMOS RTC) date",cmd_date},
     {"meminfo", "Display kernel heap memory statistics",   cmd_meminfo},
     {"calc",    "Evaluate arithmetic expression: a op b", cmd_calc},
     {"color",   "Set terminal color: color <fg> [bg]",    cmd_color},
@@ -91,6 +94,21 @@ static void cmd_uptime(int argc, char **argv) {
     uint32_t rem_secs = secs % 60;
 
     printf("Uptime: %u min, %u sec (%u timer ticks elapsed at 100 Hz)\n", mins, rem_secs, ticks);
+}
+
+static void cmd_date(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    rtc_datetime_t dt;
+    rtc_get_datetime(&dt);
+
+    printf("%04u-%02u-%02u %02u:%02u:%02u UTC\n",
+           (unsigned int)dt.year,
+           (unsigned int)dt.month,
+           (unsigned int)dt.day,
+           (unsigned int)dt.hour,
+           (unsigned int)dt.minute,
+           (unsigned int)dt.second);
 }
 
 static void cmd_meminfo(int argc, char **argv) {
