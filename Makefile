@@ -16,7 +16,7 @@ KERNEL_C_SRCS = $(wildcard kernel/*.c) $(wildcard kernel/**/*.c)
 KERNEL_ASM_OBJS = $(patsubst kernel/%.asm, $(BUILD)/%.asm.o, $(KERNEL_ASM_SRCS))
 KERNEL_C_OBJS = $(patsubst kernel/%.c, $(BUILD)/%.c.o, $(KERNEL_C_SRCS))
 
-.PHONY: all run clean
+.PHONY: all run run-serial run-headless clean
 
 all: $(IMAGE)
 
@@ -44,6 +44,12 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 
 run: $(IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy
+
+run-serial: $(IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -serial stdio
+
+run-headless: $(IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display none -serial stdio
 
 clean:
 	rm -rf $(BUILD)
