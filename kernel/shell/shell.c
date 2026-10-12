@@ -4,6 +4,7 @@
 #include "drivers/keyboard.h"
 #include "drivers/rtc.h"
 #include "mm/heap.h"
+#include "arch/cpu.h"
 #include "arch/io.h"
 #include "lib/printf.h"
 #include "lib/string.h"
@@ -24,6 +25,7 @@ static void cmd_panic(int argc, char **argv);
 static void cmd_about(int argc, char **argv);
 static void cmd_meminfo(int argc, char **argv);
 static void cmd_date(int argc, char **argv);
+static void cmd_cpuinfo(int argc, char **argv);
 
 struct shell_command {
     const char *name;
@@ -39,6 +41,7 @@ static const struct shell_command commands[] = {
     {"uname",   "Display operating system information",   cmd_version},
     {"uptime",  "Display system uptime and timer ticks",  cmd_uptime},
     {"date",    "Display real-time clock (CMOS RTC) date",cmd_date},
+    {"cpuinfo", "Display CPU hardware details via CPUID",  cmd_cpuinfo},
     {"meminfo", "Display kernel heap memory statistics",   cmd_meminfo},
     {"calc",    "Evaluate arithmetic expression: a op b", cmd_calc},
     {"color",   "Set terminal color: color <fg> [bg]",    cmd_color},
@@ -109,6 +112,29 @@ static void cmd_date(int argc, char **argv) {
            (unsigned int)dt.hour,
            (unsigned int)dt.minute,
            (unsigned int)dt.second);
+}
+
+static void cmd_cpuinfo(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    cpu_info_t info;
+    cpu_get_info(&info);
+
+    printf("\nCPU Hardware Information:\n");
+    printf("----------------------------------------------------\n");
+    printf("  Vendor ID        : %s\n", info.vendor);
+    printf("  Model / Brand    : %s\n", info.brand);
+    printf("  Family / Model   : Family %u, Model %u, Stepping %u\n",
+           (unsigned int)info.family, (unsigned int)info.model, (unsigned int)info.stepping);
+    printf("  Features         : %s%s%s%s%s%s\n",
+           info.has_fpu ? "FPU " : "",
+           info.has_tsc ? "TSC " : "",
+           info.has_msr ? "MSR " : "",
+           info.has_apic ? "APIC " : "",
+           info.has_sse ? "SSE " : "",
+           info.has_sse2 ? "SSE2 " : "");
+    printf("  Hypervisor State : %s\n", info.has_hypervisor ? "Virtual Machine Detected" : "Bare Metal");
+    printf("----------------------------------------------------\n");
 }
 
 static void cmd_meminfo(int argc, char **argv) {
