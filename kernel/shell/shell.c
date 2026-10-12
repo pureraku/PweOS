@@ -4,6 +4,7 @@
 #include "drivers/keyboard.h"
 #include "drivers/rtc.h"
 #include "mm/heap.h"
+#include "fs/ramfs.h"
 #include "arch/cpu.h"
 #include "arch/io.h"
 #include "lib/printf.h"
@@ -26,6 +27,11 @@ static void cmd_about(int argc, char **argv);
 static void cmd_meminfo(int argc, char **argv);
 static void cmd_date(int argc, char **argv);
 static void cmd_cpuinfo(int argc, char **argv);
+static void cmd_ls(int argc, char **argv);
+static void cmd_cat(int argc, char **argv);
+static void cmd_touch(int argc, char **argv);
+static void cmd_write(int argc, char **argv);
+static void cmd_rm(int argc, char **argv);
 
 struct shell_command {
     const char *name;
@@ -43,6 +49,11 @@ static const struct shell_command commands[] = {
     {"date",    "Display real-time clock (CMOS RTC) date",cmd_date},
     {"cpuinfo", "Display CPU hardware details via CPUID",  cmd_cpuinfo},
     {"meminfo", "Display kernel heap memory statistics",   cmd_meminfo},
+    {"ls",      "List files in in-memory RAM filesystem", cmd_ls},
+    {"cat",     "Display file contents: cat <filename>",  cmd_cat},
+    {"touch",   "Create empty file: touch <filename>",    cmd_touch},
+    {"write",   "Write to file: write <filename> <text>", cmd_write},
+    {"rm",      "Delete file: rm <filename>",             cmd_rm},
     {"calc",    "Evaluate arithmetic expression: a op b", cmd_calc},
     {"color",   "Set terminal color: color <fg> [bg]",    cmd_color},
     {"sleep",   "Delay execution for N seconds",          cmd_sleep},
@@ -135,6 +146,94 @@ static void cmd_cpuinfo(int argc, char **argv) {
            info.has_sse2 ? "SSE2 " : "");
     printf("  Hypervisor State : %s\n", info.has_hypervisor ? "Virtual Machine Detected" : "Bare Metal");
     printf("----------------------------------------------------\n");
+}
+
+static void print_file_entry(const char *name, size_t size) {
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    printf("  %-16s", name);
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    printf(" %u bytes\n", (unsigned int)size);
+}
+
+static void cmd_ls(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    printf("\nRAMFS Files (%u total):\n", (unsigned int)ramfs_count());
+    printf("----------------------------------------------------\n");
+    ramfs_list(print_file_entry);
+    printf("----------------------------------------------------\n");
+}
+
+static void cmd_cat(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: cat <filename>\n");
+        return;
+    }
+    size_t size = 0;
+    const char *data = ramfs_read(argv[1], &size);
+    if (!data) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        printf("Error: File '%s' not found.\n", argv[1]);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        return;
+    }
+    printf("%s", data);
+    if (size > 0 && data[size - 1] != '\n') {
+        printf("\n");
+    }
+}
+
+static void cmd_touch(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: touch <filename>\n");
+        return;
+    }
+    if (ramfs_create(argv[1], "")) {
+        printf("Created file '%s'.\n", argv[1]);
+    } else {
+        printf("File '%s' already exists or creation failed.\n", argv[1]);
+    }
+}
+
+static void cmd_write(int argc, char **argv) {
+    if (argc < 3) {
+        printf("Usage: write <filename> <text...>\n");
+        return;
+    }
+
+    // Join remaining arguments into single string
+    char buffer[256];
+    buffer[0] = '\0';
+    size_t pos = 0;
+    for (int i = 2; i < argc; i++) {
+        size_t arg_len = strlen(argv[i]);
+        if (pos + arg_len + 2 >= sizeof(buffer)) break;
+        if (i > 2) buffer[pos++] = ' ';
+        strcpy(buffer + pos, argv[i]);
+        pos += arg_len;
+    }
+    buffer[pos++] = '\n';
+    buffer[pos] = '\0';
+
+    if (ramfs_write(argv[1], buffer, false)) {
+        printf("Wrote %u bytes to '%s'.\n", (unsigned int)pos, argv[1]);
+    } else {
+        printf("Failed to write to '%s'.\n", argv[1]);
+    }
+}
+
+static void cmd_rm(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: rm <filename>\n");
+        return;
+    }
+    if (ramfs_delete(argv[1])) {
+        printf("Deleted file '%s'.\n", argv[1]);
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        printf("Error: File '%s' not found.\n", argv[1]);
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    }
 }
 
 static void cmd_meminfo(int argc, char **argv) {

@@ -2,6 +2,7 @@
 #include "drivers/timer.h"
 #include "drivers/keyboard.h"
 #include "mm/heap.h"
+#include "fs/ramfs.h"
 #include "shell/shell.h"
 #include "lib/printf.h"
 #include "arch/isr.h"
@@ -10,6 +11,7 @@ void kmain(void) {
     vga_init();
     isr_init();
     heap_init(HEAP_START_ADDR, HEAP_INITIAL_SIZE);
+    ramfs_init();
     timer_init(100);
     keyboard_init();
 
@@ -27,6 +29,7 @@ void kmain(void) {
     printf("[+] CPU: Intel 80386+ in 32-bit Protected Mode (IF=1 interrupts active)\n");
     printf("[+] Memory: Flat model active (base: %p, limit: 4GB)\n", (void *)0);
     printf("[+] Heap: Dynamic allocator initialized at %p (size: %u KB)\n", (void *)HEAP_START_ADDR, (unsigned int)(HEAP_INITIAL_SIZE / 1024));
+    printf("[+] RAMFS: In-memory filesystem initialized (%u default files mounted)\n", (unsigned int)ramfs_count());
     printf("[+] IDT: 256 descriptor gates loaded, PIC remapped to vectors 0x20..0x2F\n");
     printf("[+] PIT: Timer running at %d Hz (IRQ0 active)\n", 100);
     printf("[+] Keyboard: PS/2 controller driver online (IRQ1 active)\n");
