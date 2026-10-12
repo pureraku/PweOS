@@ -1,6 +1,7 @@
 #include "drivers/vga.h"
 #include "drivers/timer.h"
 #include "drivers/keyboard.h"
+#include "shell/shell.h"
 #include "lib/printf.h"
 #include "arch/isr.h"
 
@@ -29,5 +30,6 @@ void kmain(void) {
     printf("[+] Console: VGA %dx%d text buffer at %p\n", VGA_WIDTH, VGA_HEIGHT, (void *)0xB8000);
     printf("[+] Serial: COM1 active at port 0x%x (38400 baud, 8N1)\n\n", 0x3F8);
 
-    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    shell_init();
+    shell_run();
 }
