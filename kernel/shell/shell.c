@@ -71,14 +71,14 @@ static void cmd_help(int argc, char **argv) {
     (void)argc;
     (void)argv;
     printf("\nPweOS Builtin Commands:\n");
-    printf("----------------------------------------------------\n");
+    printf("-----------------------:3---------------------------\n");
     for (size_t i = 0; i < command_count; i++) {
         vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         printf("  %-10s", commands[i].name);
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         printf(" - %s\n", commands[i].desc);
     }
-    printf("----------------------------------------------------\n");
+    printf("-----------------------:3----------------------------\n");
 }
 
 static void cmd_clear(int argc, char **argv) {
@@ -97,7 +97,7 @@ static void cmd_echo(int argc, char **argv) {
 static void cmd_version(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    printf("PweOS version %s (i686-pc-none-elf)\n", PWEOS_VERSION);
+    printf("PweOS :3 version %s (i686-pc-none-elf)\n", PWEOS_VERSION);
     printf("Build: Freestanding 32-bit x86 Kernel\n");
 }
 
@@ -109,7 +109,7 @@ static void cmd_uptime(int argc, char **argv) {
     uint32_t mins = secs / 60;
     uint32_t rem_secs = secs % 60;
 
-    printf("Uptime: %u min, %u sec (%u timer ticks elapsed at 100 Hz)\n", mins, rem_secs, ticks);
+    printf("Uptime: %u min, %u sec (%u timer ticks elapsed at 100 Hz) :3\n", mins, rem_secs, ticks);
 }
 
 static void cmd_date(int argc, char **argv) {
@@ -118,7 +118,7 @@ static void cmd_date(int argc, char **argv) {
     rtc_datetime_t dt;
     rtc_get_datetime(&dt);
 
-    printf("%04u-%02u-%02u %02u:%02u:%02u UTC\n",
+    printf("%04u-%02u-%02u %02u:%02u:%02u UTC :3\n",
            (unsigned int)dt.year,
            (unsigned int)dt.month,
            (unsigned int)dt.day,
@@ -161,7 +161,7 @@ static void cmd_ls(int argc, char **argv) {
     (void)argc;
     (void)argv;
     printf("\nRAMFS Files (%u total):\n", (unsigned int)ramfs_count());
-    printf("----------------------------------------------------\n");
+    printf("dang so many files..\n");
     ramfs_list(print_file_entry);
     printf("----------------------------------------------------\n");
 }
@@ -191,7 +191,7 @@ static void cmd_touch(int argc, char **argv) {
         return;
     }
     if (ramfs_create(argv[1], "")) {
-        printf("Created file '%s'.\n", argv[1]);
+        printf("Created file '%s'. :3\n", argv[1]);
     } else {
         printf("File '%s' already exists or creation failed.\n", argv[1]);
     }
@@ -218,9 +218,9 @@ static void cmd_write(int argc, char **argv) {
     buffer[pos] = '\0';
 
     if (ramfs_write(argv[1], buffer, false)) {
-        printf("Wrote %u bytes to '%s'.\n", (unsigned int)pos, argv[1]);
+        printf("Wrote %u bytes to '%s'. :3\n", (unsigned int)pos, argv[1]);
     } else {
-        printf("Failed to write to '%s'.\n", argv[1]);
+        printf("Failed to write to '%s'. :(\n", argv[1]);
     }
 }
 
@@ -230,7 +230,7 @@ static void cmd_rm(int argc, char **argv) {
         return;
     }
     if (ramfs_delete(argv[1])) {
-        printf("Deleted file '%s'.\n", argv[1]);
+        printf("Deleted file '%s'. :3\n", argv[1]);
     } else {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         printf("Error: File '%s' not found.\n", argv[1]);
@@ -350,7 +350,7 @@ static void cmd_color(int argc, char **argv) {
     }
 
     vga_set_color((enum vga_color)fg, (enum vga_color)bg);
-    printf("Color changed to %s on %s.\n", argv[1], argc >= 3 ? argv[2] : "black");
+    printf("Color changed to %s on %s. :3\n", argv[1], argc >= 3 ? argv[2] : "black");
 }
 
 static void cmd_sleep(int argc, char **argv) {
@@ -360,9 +360,9 @@ static void cmd_sleep(int argc, char **argv) {
     }
     int s = atoi(argv[1]);
     if (s <= 0) s = 1;
-    printf("Sleeping for %d second(s)...\n", s);
+    printf("Sleeping for %d second(s)... :3\n", s);
     timer_sleep((uint32_t)(s * 100));
-    printf("Done.\n");
+    printf("Done. :3\n");
 }
 
 static uint32_t parse_hex(const char *s) {
@@ -393,7 +393,7 @@ static void cmd_peek(int argc, char **argv) {
 static void cmd_reboot(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    printf("Restarting PweOS...\n");
+    printf("Restarting PweOS :3...\n");
     timer_sleep(20);
 
     // Pulse CPU reset line via 8042 keyboard controller
@@ -422,7 +422,7 @@ static void cmd_about(int argc, char **argv) {
     (void)argc;
     (void)argv;
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    printf("\n  ==== About PweOS ====\n");
+    printf("\n  ==== About PweOS :3 ====\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     printf("  Architecture : 32-bit x86 (i686 Protected Mode)\n");
     printf("  Bootloader   : 2-stage custom BIOS MBR with A20 & GDT\n");
@@ -461,7 +461,7 @@ static void history_add(const char *cmd) {
 static void cmd_history(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    printf("\nCommand History:\n");
+    printf("\nCommand History: :3\n");
     printf("----------------------------------------------------\n");
     if (shell_history_count == 0) {
         printf("  (no commands in history)\n");
