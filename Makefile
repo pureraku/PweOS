@@ -1,6 +1,6 @@
 ASM = nasm
-CC = clang --target=i686-unknown-none-elf
 LD = ld.lld
+CARGO = cargo
 QEMU = qemu-system-i386
 
 UNAME_S := $(shell uname -s)
@@ -12,39 +12,38 @@ else
     QEMU_FULLSCREEN ?= -full-screen
 endif
 
-CFLAGS = -ffreestanding -m32 -mgeneral-regs-only -mno-sse -mno-sse2 -mno-mmx -fno-pie -fno-pic -fno-stack-protector -fno-builtin -Wall -Wextra -O2 -Ikernel
-LDFLAGS = -m elf_i386 --oformat binary -T kernel/linker.ld
-
 BUILD = build
 BOOT_BIN = $(BUILD)/boot.bin
 KERNEL_BIN = $(BUILD)/kernel.bin
 IMAGE = $(BUILD)/pweos.img
 
-KERNEL_ASM_SRCS = $(wildcard kernel/arch/*.asm)
-KERNEL_C_SRCS = $(wildcard kernel/*.c) $(wildcard kernel/**/*.c)
-KERNEL_ASM_OBJS = $(patsubst kernel/%.asm, $(BUILD)/%.asm.o, $(KERNEL_ASM_SRCS))
-KERNEL_C_OBJS = $(patsubst kernel/%.c, $(BUILD)/%.c.o, $(KERNEL_C_SRCS))
+ENTRY_OBJ = $(BUILD)/entry.asm.o
+ISR_OBJ = $(BUILD)/isr.asm.o
+KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
-.PHONY: all run run-fullscreen run-curses run-serial run-headless clean
+LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
+
+.PHONY: all run run-fullscreen run-curses run-serial run-headless clean check clippy
 
 all: $(IMAGE)
 
 $(BUILD):
-	mkdir -p $(BUILD)/arch $(BUILD)/drivers $(BUILD)/lib $(BUILD)/shell $(BUILD)/mm $(BUILD)/fs
+	mkdir -p $(BUILD)
 
 $(BOOT_BIN): boot/boot.asm | $(BUILD)
 	$(ASM) $< -f bin -o $@
 	test "$$(wc -c < $(BOOT_BIN))" -eq 512
 
-$(BUILD)/%.asm.o: kernel/%.asm | $(BUILD)
-	mkdir -p $(dir $@)
+$(ENTRY_OBJ): src/arch/entry.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(BUILD)/%.c.o: kernel/%.c | $(BUILD)
-	mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(ISR_OBJ): src/arch/isr.asm | $(BUILD)
+	$(ASM) $< -f elf32 -o $@
 
-$(KERNEL_BIN): $(KERNEL_ASM_OBJS) $(KERNEL_C_OBJS)
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) Cargo.toml targets/i686-pweos.json
+	$(CARGO) build --release
+
+$(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(KERNEL_LIB)
 	$(LD) $(LDFLAGS) $^ -o $@
 
 $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
@@ -66,5 +65,11 @@ run-serial: $(IMAGE)
 run-headless: $(IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display none -serial stdio
 
+check:
+	$(CARGO) check
+
+clippy:
+	$(CARGO) clippy
+
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) target

@@ -8,7 +8,7 @@ ORG 0x7C00
 
 KERNEL_LOAD_SEG  equ 0x1000      ; Physical address 0x10000
 KERNEL_LOAD_OFF  equ 0x0000
-KERNEL_SECTORS   equ 64          ; Read up to 64 sectors (32 KB)
+KERNEL_SECTORS   equ 256         ; Read up to 256 sectors (128 KB)
 
 start:
     ; Set up segment registers and stack in real mode
@@ -100,7 +100,9 @@ load_kernel:
     jc disk_error
 
 .read_ok:
-    add bx, 512
+    mov ax, es
+    add ax, 0x20
+    mov es, ax
     inc si
     dec di
     jmp .read_loop

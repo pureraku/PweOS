@@ -1,6 +1,6 @@
 # PweOS
 
-PweOS is a minimal, educational 32-bit x86 operating system featuring a custom BIOS bootloader, freestanding C kernel, dynamic memory allocator, interrupt-driven device drivers, in-memory virtual filesystem, and an interactive command shell.
+PweOS is a minimal, educational 32-bit x86 operating system featuring a custom BIOS bootloader, freestanding Rust kernel (`no_std`, `alloc`), dynamic heap memory allocator implementing Rust's `GlobalAlloc`, interrupt-driven device drivers, in-memory virtual filesystem, and an interactive command shell.
 
 ```
 ================================================================================
@@ -22,7 +22,7 @@ Type 'help' to see available commands.
 pweos> help
 
 PweOS Builtin Commands:
-----------------------------------------------------
+-----------------------:3---------------------------
   help       - Display list of available commands
   clear      - Clear screen and reset cursor
   echo       - Print arguments to the console
@@ -45,7 +45,7 @@ PweOS Builtin Commands:
   reboot     - Reboot the system
   panic      - Trigger kernel panic (exception test)
   about      - Information about PweOS system
-----------------------------------------------------
+-----------------------:3----------------------------
 pweos>
 ```
 
@@ -53,7 +53,7 @@ pweos>
 
 ## Architecture Overview
 
-PweOS is built from the ground up without third-party runtimes:
+PweOS is built from the ground up in freestanding Rust without external operating system dependencies:
 
 ```
 +-------------------------------------------------------------+
@@ -64,10 +64,10 @@ PweOS is built from the ground up without third-party runtimes:
 |       (Dynamically allocated files, cat, touch, write, rm)   |
 +-------------------------------------------------------------+
 |                  Dynamic Heap Memory Allocator              |
-|        (kmalloc, kfree, kcalloc, krealloc, coalescing)      |
+|   (kmalloc/kfree, block coalescing, GlobalAlloc for alloc)  |
 +-------------------------------------------------------------+
-|                      Custom Freestanding C Libc              |
-|        (printf, snprintf, string, ctype, memory utilities)  |
+|             Freestanding Rust Runtime (no_std)              |
+|        (core::fmt, alloc::vec::Vec, alloc::string::String)  |
 +-------------------------------------------------------------+
 |                       Device Drivers                        |
 |  VGA 80x25 Text | PS/2 Keyboard | PIT 8253 | CMOS RTC | COM1|
@@ -79,59 +79,56 @@ PweOS is built from the ground up without third-party runtimes:
 |   GDT (Flat 4GB Code & Data) | A20 Gate | Stack at 0x90000   |
 +-------------------------------------------------------------+
 |              Stage 1 BIOS Boot Sector (512 Bytes)           |
-|      Loads 32KB kernel from floppy disk via BIOS INT 13h    |
+|      Loads kernel sectors from floppy disk via BIOS INT 13h |
 +-------------------------------------------------------------+
 ```
 
 ### 1. Bootloader (`boot/boot.asm`)
 - **Stage 1 MBR Boot Sector (512 bytes)** executed by BIOS at `0x7C00`.
-- Performs **LBA to CHS conversion** to load 64 sectors (32 KB) of the kernel into physical memory at `0x10000` (`0x1000:0x0000`).
+- Performs **LBA to CHS conversion** to load kernel sectors into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector to support kernels larger than 64 KB.
 - Enables the **A20 Address Line** via Fast A20 gate.
 - Loads a 32-bit **Global Descriptor Table (GDT)** defining flat 4GB code and data segments.
 - Transitions the processor from 16-bit Real Mode to **32-bit Protected Mode** (`CR0.PE = 1`) and jumps to kernel entry.
 
-### 2. Kernel Entry & Linker (`kernel/arch/entry.asm`, `kernel/linker.ld`)
+### 2. Kernel Entry & Linker (`src/arch/entry.asm`, `linker.ld`)
 - Sets up 32-bit data segment registers (`DS`, `ES`, `FS`, `GS`, `SS`).
 - Initializes a dedicated stack safely below video memory (`0x90000`).
-- Transfers control to `kmain()`.
+- Transfers control to Rust kernel entry point `kmain()`.
 
-### 3. Dynamic Heap Memory Manager (`kernel/mm/heap.c`, `kernel/mm/heap.h`)
+### 3. Dynamic Heap Memory Manager (`src/mm/heap.rs`)
 - Manages a 2 MB dynamic heap starting at `0x100000` (1 MB mark).
-- Linked-list block allocator with 8-byte alignment, block splitting, and automatic boundary coalescing on `kfree`.
-- Provides `kmalloc`, `kfree`, `kcalloc`, `krealloc`, and live memory diagnostics via `meminfo`.
+- Linked-list block allocator with 8-byte alignment, block splitting, and automatic boundary coalescing on free.
+- Implements Rust's `core::alloc::GlobalAlloc` trait, enabling full use of the standard `alloc` crate (`String`, `Vec`, `Box`, `format!`).
+- Provides live memory diagnostics via `meminfo`.
 
-### 4. RAMFS Virtual Filesystem (`kernel/fs/ramfs.c`, `kernel/fs/ramfs.h`)
+### 4. RAMFS Virtual Filesystem (`src/fs/ramfs.rs`)
 - Dynamic in-memory virtual filesystem backed by the heap.
 - Supports file creation, resizing, reading, appending, and deletion.
 - Prepopulated with default virtual files: `motd`, `os-release`, and `readme.txt`.
 
-### 5. VGA Text Console & Serial Driver (`kernel/drivers/vga.c`, `kernel/drivers/vga.h`)
+### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
 - Supports 16 foreground and 16 background colors.
 - Handles `\n`, `\r`, `\t`, backspace (`\b`), and screen scrolling.
 - Updates the hardware blinking text cursor via CRT controller I/O ports `0x3D4` and `0x3D5`.
+- Implements `core::fmt::Write` with `print!` and `println!` macros.
 - Simultaneously mirrors all output to **COM1 serial port (`0x3F8`)** at 38400 baud.
 
-### 6. Interrupts & Exceptions (`kernel/arch/`)
-- **IDT (`idt.c`, `idt.h`)**: Configures 256 interrupt gates.
-- **PIC 8259 (`pic.c`, `pic.h`)**: Remaps Master PIC IRQs to vectors `0x20..0x27` and Slave PIC IRQs to vectors `0x28..0x2F` to prevent conflicts with Intel CPU exceptions.
-- **ISRs (`isr.asm`, `isr.c`)**: Dedicated assembly stubs for CPU exceptions 0-31 that save CPU registers (`registers_t`) and invoke diagnostic panic handlers displaying exception names, error codes, and full register dumps.
+### 6. Interrupts & Exceptions (`src/arch/`)
+- **IDT (`idt.rs`)**: Configures 256 interrupt gates.
+- **PIC 8259 (`pic.rs`)**: Remaps Master PIC IRQs to vectors `0x20..0x27` and Slave PIC IRQs to vectors `0x28..0x2F` to prevent conflicts with Intel CPU exceptions.
+- **ISRs (`isr.asm`, `isr.rs`)**: Dedicated assembly stubs for CPU exceptions 0-31 that save CPU registers (`Registers`) and invoke diagnostic panic handlers displaying exception names, error codes, and full register dumps.
 
-### 7. Hardware Drivers (`kernel/drivers/`)
-- **PIT 8253 Timer (`timer.c`, `timer.h`)**: Channel 0 timer running at 100 Hz on IRQ0, tracking system ticks, elapsed uptime, and supporting `timer_sleep()`.
-- **PS/2 Keyboard (`keyboard.c`, `keyboard.h`)**: Decodes Scancode Set 1 on IRQ1 with extended key prefix `0xE0` support for arrow keys (Up, Down, Left, Right). Handles Shift and Caps Lock, buffers keystrokes in a circular ring buffer, and supports headless ANSI serial input from COM1.
-- **CMOS Real-Time Clock (`rtc.c`, `rtc.h`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
-- **CPUID Detection (`cpu.c`, `cpu.h`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
+### 7. Hardware Drivers (`src/drivers/`)
+- **PIT 8253 Timer (`timer.rs`)**: Channel 0 timer running at 100 Hz on IRQ0, tracking system ticks, elapsed uptime, and supporting `timer_sleep()`.
+- **PS/2 Keyboard (`keyboard.rs`)**: Decodes Scancode Set 1 on IRQ1 with extended key prefix `0xE0` support for arrow keys (Up, Down, Left, Right). Handles Shift and Caps Lock, buffers keystrokes in a thread-safe ring buffer, and supports headless ANSI serial input from COM1.
+- **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
+- **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
 
-### 8. Freestanding C Standard Library (`kernel/lib/`)
-- Minimal custom C runtime without external dependencies.
-- Memory & string manipulation: `strlen`, `strcmp`, `strncmp`, `strcpy`, `strncpy`, `memset`, `memcpy`, `memmove`, `atoi`, `itoa`, `utoa`.
-- Formatted printing: `printf`, `snprintf`, `vsnprintf` supporting `%s`, `%c`, `%d`, `%u`, `%x`, `%X`, `%p`, and field width/zero-padding.
-
-### 9. Interactive Shell (`kernel/shell/`)
+### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
-- Zero-allocation command line tokenization into `argc` and `argv`.
+- Interactive command interpreter with line editing and 22 builtin commands.
 
 ---
 
@@ -167,35 +164,45 @@ PweOS is built from the ground up without third-party runtimes:
 
 ```
 PweOS/
+├── Cargo.toml               # Rust package manifest
+├── rust-toolchain.toml      # Nightly toolchain pinning & rust-src
+├── .cargo/
+│   └── config.toml          # Custom target specification & build-std flags
+├── targets/
+│   └── i686-pweos.json      # Bare-metal i686 target definition
 ├── Makefile                 # Build system & QEMU targets
 ├── README.md                # Documentation & Architecture overview
+├── linker.ld                # Linker script (entry at 0x10000)
 ├── boot/
 │   └── boot.asm             # Stage 1 MBR Bootloader (16-bit to 32-bit switch)
-└── kernel/
-    ├── kernel.c             # Kernel initialization (kmain)
-    ├── linker.ld            # Linker script (entry at 0x10000)
+└── src/
+    ├── lib.rs               # Kernel initialization (kmain) & panic handler
+    ├── print.rs             # Formatted print! and println! macros
+    ├── sync.rs              # Interrupt-safe spinlock synchronization
     ├── arch/
-    │   ├── entry.asm        # 32-bit kernel startup & C calling convention
-    │   ├── cpu.c / cpu.h    # CPUID hardware feature detection
-    │   ├── idt.c / idt.h    # Interrupt Descriptor Table management
-    │   ├── io.h             # Inline assembly for x86 port I/O (inb, outb)
+    │   ├── mod.rs           # Architecture module root
+    │   ├── entry.asm        # 32-bit kernel startup & entry stub
+    │   ├── cpu.rs           # CPUID hardware feature detection
+    │   ├── idt.rs           # Interrupt Descriptor Table management
+    │   ├── io.rs            # x86 port I/O (inb, outb, inw, outw, io_wait)
     │   ├── isr.asm          # Low-level interrupt service routine stubs
-    │   ├── isr.c / isr.h    # Exception and IRQ dispatchers
-    │   └── pic.c / pic.h    # 8259 Programmable Interrupt Controller
+    │   ├── isr.rs           # Exception and IRQ dispatchers & panic dump
+    │   └── pic.rs           # 8259 Programmable Interrupt Controller
     ├── drivers/
-    │   ├── keyboard.c / .h  # PS/2 keyboard & serial input with arrow keys
-    │   ├── rtc.c / rtc.h    # CMOS Real-Time Clock driver
-    │   ├── timer.c / .h     # 8253 PIT timer (100 Hz, uptime, sleep)
-    │   └── vga.c / .h       # VGA 80x25 text mode & COM1 UART serial
+    │   ├── mod.rs           # Drivers module root
+    │   ├── keyboard.rs      # PS/2 keyboard & serial input with arrow keys
+    │   ├── rtc.rs           # CMOS Real-Time Clock driver
+    │   ├── serial.rs        # COM1 UART serial port driver (38400 baud, 8N1)
+    │   ├── timer.rs         # 8253 PIT timer (100 Hz, uptime, sleep)
+    │   └── vga.rs           # VGA 80x25 text mode & hardware cursor
     ├── fs/
-    │   └── ramfs.c / .h     # Dynamic RAM virtual filesystem
+    │   ├── mod.rs           # Filesystem module root
+    │   └── ramfs.rs         # Dynamic RAM virtual filesystem
     ├── mm/
-    │   └── heap.c / .h      # Dynamic kernel heap allocator (kmalloc/kfree)
-    ├── lib/
-    │   ├── printf.c / .h    # Formatted printk/printf implementation
-    │   └── string.c / .h    # Memory and string manipulation functions
+    │   ├── mod.rs           # Memory management module root
+    │   └── heap.rs          # Dynamic kernel heap allocator & GlobalAlloc
     └── shell/
-        └── shell.c / .h     # Interactive shell with history and 22 builtins
+        └── mod.rs           # Interactive shell with history and 22 builtins
 ```
 
 ---
@@ -203,17 +210,17 @@ PweOS/
 ## Prerequisites
 
 To build and run PweOS, you need:
+- **Rust** (Nightly channel with `rust-src` component)
 - **NASM** (Netwide Assembler)
-- **Clang** (with `i686-unknown-none-elf` target support)
 - **LLD** (`ld.lld` linker)
 - **QEMU** (`qemu-system-i386`)
 
 On macOS (via Homebrew):
 ```bash
 brew install nasm lld qemu
+rustup toolchain install nightly
+rustup component add rust-src --toolchain nightly
 ```
-
-*(Note: Apple Clang included with Xcode Command Line Tools natively supports `--target=i686-unknown-none-elf`)*
 
 ---
 
@@ -223,7 +230,14 @@ brew install nasm lld qemu
 ```bash
 make
 ```
-This compiles the bootloader and kernel, and creates a bootable floppy disk image at `build/pweos.img`.
+This compiles the bootloader and Rust kernel, links the binary, and creates a bootable floppy disk image at `build/pweos.img`.
+
+You can also use Cargo directly:
+```bash
+cargo check
+cargo clippy
+cargo build --release
+```
 
 ### Run in QEMU (Resizable GUI window)
 ```bash
