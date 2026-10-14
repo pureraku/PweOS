@@ -172,7 +172,16 @@ static COMMANDS: &[Command] = &[
         desc: "Information about PweOS system",
         handler: cmd_about,
     },
+    Command {
+        name: "whoami",
+        desc: "Prints user",
+        handler: cmd_whoami,
+    },
 ];
+
+fn cmd_whoami(_args: &[&str]){
+    println!("idk you tell me");
+}
 
 fn cmd_help(_args: &[&str]) {
     println!("\nPweOS Builtin Commands:");
