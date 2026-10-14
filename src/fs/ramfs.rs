@@ -106,6 +106,13 @@ pub fn ramfs_init() {
         "readme.txt",
         b"PweOS includes heap memory, RTC, CPUID, RAMFS, and shell commands!\nType 'help' to see all commands.\n",
     );
+    fs.create("cat.art", 
+            br#"
+     /\_/\  
+    ( o.o ) 
+     > ^ <  
+            "#
+            );
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
