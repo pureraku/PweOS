@@ -276,13 +276,13 @@ The converter writes `assets/photo.rgb332` at 320x200, preserving the source asp
 
 ### Add a video
 
-Convert a short video supported by ffmpeg to PweOS's compact framebuffer format:
+Convert a video supported by ffmpeg to PweOS's compact framebuffer format. By default, the converter processes the full video:
 
 ```bash
-uv run tools/video_to_pwe.py path/to/clip.mp4 --fps 10 --seconds 3
+uv run tools/video_to_pwe.py path/to/clip.mp4 --fps 10
 ```
 
-The converter writes `assets/clip.pwevid` by default. Every `.pwevid` directly inside `assets/` is packed into `build/videos.img` and listed under `/videos/`; the Makefile attaches this as a companion IDE disk when starting QEMU. After rebuilding, play it with `video /videos/clip.pwevid`. The format is 320x200 RGB332 with periodic keyframes and frame-to-frame deltas. Playback currently limits a clip to 1.5 MB to fit the kernel heap. Install ffmpeg on the host first. Press any key during playback to return to the shell.
+The converter writes `assets/clip.pwevid` by default. Add every `.pwevid` directly inside `assets/`; the build packs them into `build/videos.img` and lists them under `/videos/`. The player reads one encoded frame at a time from this companion disk, so full clips do not need to fit in kernel memory. PWEV stores up to 65,535 frames; at 10 FPS that is about 109 minutes. The format is 320x200 RGB332 with periodic keyframes and frame-to-frame deltas. To make a shorter clip, add `--seconds 30`. Install ffmpeg on the host first. After rebuilding, play it with `video /videos/clip.pwevid`; press any key during playback to return to the shell.
 
 Try the included animation first with `video /videos/demo.pwevid`.
 
