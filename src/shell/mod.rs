@@ -192,7 +192,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "image",
-        desc: "Display an RGB332 image: image <path>",
+        desc: "View RGB332 image: image <path>",
         handler: cmd_image,
     },
     Command {
@@ -280,6 +280,10 @@ fn cmd_help(_args: &[&str]) {
         vga_set_color(VgaColor::LightGrey, VgaColor::Black);
         println!(" - {}", cmd.desc);
     }
+    println!("\nImage examples:");
+    println!("  image /images/cat.rgb332");
+    println!("  image /images/billi.rgb332");
+    println!("  Press Escape to return to the shell.");
     println!("-----------------------:3----------------------------");
 }
 
