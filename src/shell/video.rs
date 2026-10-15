@@ -10,24 +10,31 @@ use crate::fs::ramfs::ramfs_video_metadata;
 
 const PIXELS: usize = WIDTH * HEIGHT;
 
-/// Load a bundled video from the companion IDE disk. `Ok(None)` means the
-/// requested path is not one of the videos included at build time.
-pub fn read_bundled(path: &str) -> Result<Option<Vec<u8>>, &'static str> {
-    let Some(name) = path.strip_prefix("videos/") else { return Ok(None) };
-    let Some((start_sector, byte_len)) = ramfs_video_metadata(name) else { return Ok(None) };
-    if byte_len == 0 || byte_len > 1_500_000 {
-        return Err("video is too large for the current kernel heap");
-    }
-    let sectors = byte_len.div_ceil(512);
-    let mut data = vec![0u8; sectors * 512];
-    read_sectors(start_sector, sectors, &mut data)?;
-    data.truncate(byte_len);
-    Ok(Some(data))
+/// Play a bundled video directly from the companion IDE disk. Only one
+/// encoded frame is kept in memory at a time. `Ok(false)` means not found.
+pub fn play_bundled(path: &str) -> Result<bool, &'static str> {
+    let Some(name) = path.strip_prefix("videos/") else { return Ok(false) };
+    let Some((start_sector, byte_len)) = ramfs_video_metadata(name) else { return Ok(false) };
+    if byte_len < 12 { return Err("truncated video header"); }
+    let header = read_disk_range(start_sector, byte_len, 0, 12)?;
+    let (fps, frame_count) = parse_header(&header)?;
+    play_frames(fps, frame_count, byte_len, |offset, length| {
+        read_disk_range(start_sector, byte_len, offset, length)
+    })?;
+    Ok(true)
 }
 
 /// Play a compact PWEV v1 video from RAMFS. Frames are RGB332 keyframes or
 /// sparse changed-pixel deltas, with periodic timer-paced playback.
 pub fn play(data: &[u8]) -> Result<(), &'static str> {
+    let (fps, frame_count) = parse_header(data)?;
+    play_frames(fps, frame_count, data.len(), |offset, length| {
+        let end = offset.checked_add(length).ok_or("video frame range overflow")?;
+        Ok(data.get(offset..end).ok_or("truncated video frame")?.to_vec())
+    })
+}
+
+fn parse_header(data: &[u8]) -> Result<(u32, usize), &'static str> {
     if data.len() < 12 || &data[..4] != b"PWEV" || data[4] != 1 {
         return Err("unsupported or invalid video header");
     }
@@ -38,6 +45,15 @@ pub fn play(data: &[u8]) -> Result<(), &'static str> {
     if width != WIDTH || height != HEIGHT || fps == 0 || fps > 30 || frame_count == 0 {
         return Err("video must be 320x200, 1-30 FPS, and contain frames");
     }
+    Ok((fps, frame_count))
+}
+
+fn play_frames(
+    fps: u32,
+    frame_count: usize,
+    file_len: usize,
+    mut read_range: impl FnMut(usize, usize) -> Result<Vec<u8>, &'static str>,
+) -> Result<(), &'static str> {
 
     let mut framebuffer = Framebuffer::new();
     let mut pixels = vec![0u8; PIXELS];
@@ -47,23 +63,31 @@ pub fn play(data: &[u8]) -> Result<(), &'static str> {
     let mut failure = None;
 
     for _ in 0..frame_count {
-        let frame_kind = match data.get(cursor) {
-            Some(&kind) => kind,
-            None => { failure = Some("truncated video frame"); break; }
+        if cursor.checked_add(5).map_or(true, |end| end > file_len) {
+            failure = Some("truncated video frame header");
+            break;
+        }
+        let frame_header = match read_range(cursor, 5) {
+            Ok(bytes) => bytes,
+            Err(error) => { failure = Some(error); break; }
         };
-        cursor += 1;
-        let length = match read_u32(data, cursor) {
+        let frame_kind = frame_header[0];
+        let length = match read_u32(&frame_header, 1) {
             Ok(length) => length as usize,
             Err(error) => { failure = Some(error); break; }
         };
-        cursor += 4;
+        cursor += 5;
         let end = match cursor.checked_add(length) {
-            Some(end) if end <= data.len() => end,
+            Some(end) if end <= file_len => end,
             _ => { failure = Some("truncated video frame data"); break; }
         };
+        let encoded = match read_range(cursor, length) {
+            Ok(bytes) => bytes,
+            Err(error) => { failure = Some(error); break; }
+        };
         let result = match frame_kind {
-            0 => decode_keyframe(&data[cursor..end], &mut pixels),
-            1 if has_keyframe => decode_delta(&data[cursor..end], &mut pixels),
+            0 => decode_keyframe(&encoded, &mut pixels),
+            1 if has_keyframe => decode_delta(&encoded, &mut pixels),
             1 => Err("video starts with a delta frame"),
             _ => Err("unknown video frame type"),
         };
@@ -83,7 +107,7 @@ pub fn play(data: &[u8]) -> Result<(), &'static str> {
         timer_sleep((100 / fps).max(1));
     }
 
-    if failure.is_none() && !cancelled && cursor != data.len() {
+    if failure.is_none() && !cancelled && cursor != file_len {
         failure = Some("unexpected bytes after video frames");
     }
     framebuffer.leave();
@@ -92,6 +116,20 @@ pub fn play(data: &[u8]) -> Result<(), &'static str> {
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+fn read_disk_range(start_sector: u32, file_len: usize, offset: usize, length: usize) -> Result<Vec<u8>, &'static str> {
+    let end = offset.checked_add(length).ok_or("video read range overflow")?;
+    if end > file_len { return Err("video read is outside file"); }
+    if length == 0 { return Ok(Vec::new()); }
+    let absolute = (start_sector as usize).checked_mul(512)
+        .and_then(|base| base.checked_add(offset)).ok_or("video disk offset overflow")?;
+    let first_sector = absolute / 512;
+    let within_sector = absolute % 512;
+    let sectors = (within_sector + length).div_ceil(512);
+    let mut buffer = vec![0u8; sectors * 512];
+    read_sectors(first_sector as u32, sectors, &mut buffer)?;
+    Ok(buffer[within_sector..within_sector + length].to_vec())
 }
 
 fn decode_keyframe(encoded: &[u8], pixels: &mut [u8]) -> Result<(), &'static str> {

@@ -331,24 +331,17 @@ fn cmd_video(args: &[&str]) {
         return;
     }
     let path = resolve_path(args[1]);
-    let data = match ramfs_read(&path) {
-        Some(data) => Some(data),
-        None => match video::read_bundled(&path) {
-            Ok(data) => data,
-            Err(error) => {
-                println!("video: {}", error);
-                return;
-            }
-        },
-    };
-    match data {
-        Some(data) => {
-            println!("Playing video; press any key to stop.");
-            if let Err(error) = video::play(&data) {
-                println!("video: {}", error);
-            }
+    println!("Playing video; press any key to stop.");
+    if let Some(data) = ramfs_read(&path) {
+        if let Err(error) = video::play(&data) {
+            println!("video: {}", error);
         }
-        None => println!("video: '{}' not found", args[1]),
+        return;
+    }
+    match video::play_bundled(&path) {
+        Ok(true) => {}
+        Ok(false) => println!("video: '{}' not found", args[1]),
+        Err(error) => println!("video: {}", error),
     }
 }
 
