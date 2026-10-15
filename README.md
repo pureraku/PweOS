@@ -44,6 +44,7 @@ PweOS Builtin Commands:
   touch      - Create empty file: touch <filename>
   write      - Write one line: write <filename> <text>
   edit       - Edit multiline files: edit <path> (Escape saves)
+  less       - Read files with arrow-key navigation: less <path>
   rm         - Delete file: rm <filename>
   calc       - Evaluate arithmetic expression: a op b
   color      - Set terminal color: color <fg> [bg]
@@ -162,7 +163,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `grep` | `grep <text>` | Prints lines from piped input that contain the text |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
-| `edit` | `edit <path>` | Opens a multiline editor; arrows move the cursor, Enter inserts a newline, Backspace/Delete erase, and Escape saves |
+| `edit` | `edit [path]` | Opens a multiline editor; accepts piped text, and prompts for a save path when none was given |
+| `less` | `less [path]` | Views a file or piped text without editing; arrows navigate and `q` or Escape exits |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |
 | `color` | `color <fg> [bg]` | Changes console foreground and optional background color |
@@ -172,7 +174,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `panic` | `panic` | Triggers a division-by-zero exception to demonstrate the crash handler |
 | `about` | `about` | Displays system architecture and component specifications |
 
-Commands can be connected with `|` to pass output to the next command. For example, `cat notes.txt | grep TODO` filters a file, and `cat notes.txt | write copy.txt` writes its contents to another file.
+Commands can be connected with `|` to pass output to the next command. For example, `cat notes.txt | grep TODO` filters a file, `cat notes.txt | write copy.txt` copies it, `help | less` views command help, and `help | edit` opens that help text for editing and asks where to save it when you press Escape.
 
 ---
 

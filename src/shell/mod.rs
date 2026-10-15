@@ -206,8 +206,13 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "edit",
-        desc: "Edit a multiline file with arrows: edit <path> (Escape saves)",
+        desc: "Edit a file or piped text: edit [path] (Escape saves)",
         handler: cmd_edit,
+    },
+    Command {
+        name: "less",
+        desc: "View a file or piped text: less [path] (q exits)",
+        handler: cmd_less,
     },
     Command {
         name: "rm",
@@ -575,13 +580,52 @@ fn editor_cursor_line_column(contents: &[u8], cursor: usize) -> (usize, usize) {
     (line, column)
 }
 
-fn editor_redraw(path: &str, contents: &[u8], cursor: usize) {
+fn move_text_cursor(contents: &[u8], cursor: &mut usize, preferred_column: &mut usize, key: u8) -> bool {
+    match key {
+        KEY_LEFT if *cursor > 0 => {
+            *cursor -= 1;
+            *preferred_column = editor_cursor_line_column(contents, *cursor).1;
+            true
+        }
+        KEY_RIGHT if *cursor < contents.len() => {
+            *cursor += 1;
+            *preferred_column = editor_cursor_line_column(contents, *cursor).1;
+            true
+        }
+        KEY_UP | KEY_DOWN => {
+            let (line, _) = editor_cursor_line_column(contents, *cursor);
+            let (_, line_end) = editor_line_bounds(contents, line);
+            let target_line = if key == KEY_UP {
+                line.checked_sub(1)
+            } else if line_end < contents.len() {
+                Some(line + 1)
+            } else {
+                None
+            };
+            if let Some(target_line) = target_line {
+                let (target_start, target_end) = editor_line_bounds(contents, target_line);
+                *cursor = target_start + (*preferred_column).min(target_end - target_start);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn editor_redraw(path: &str, contents: &[u8], cursor: usize, read_only: bool) {
     vga_clear();
     vga_set_color(VgaColor::LightCyan, VgaColor::Black);
-    println!("PweOS editor — {}", path);
+    println!("PweOS {} — {}", if read_only { "viewer" } else { "editor" }, path);
     vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-    println!("Arrows move | Enter inserts a line | Backspace/Delete erase");
-    println!("Escape saves and returns to the shell.");
+    if read_only {
+        println!("Arrows move through the file | q or Escape returns to shell.");
+        println!("Read-only view.");
+    } else {
+        println!("Arrows move | Enter inserts a line | Backspace/Delete erase");
+        println!("Escape saves and returns to the shell.");
+    }
     println!("----------------------------------------------------");
 
     const HEADER_ROWS: usize = 4;
@@ -612,91 +656,127 @@ fn editor_redraw(path: &str, contents: &[u8], cursor: usize) {
 }
 
 fn cmd_edit(args: &[&str]) {
-    if args.len() < 2 {
+    if args.len() < 2 && !*PIPE_ACTIVE.lock() {
         println!("Usage: edit <path>");
         return;
     }
 
     const EDITOR_MAX_BYTES: usize = 4096;
-    let path = resolve_path(args[1]);
-    let mut contents = match ramfs_read(&path) {
-        Some(data) => data,
-        None => {
-            if !ramfs_create(&path, b"") {
-                println!("edit: could not create '{}' (check the parent directory).", path);
-                return;
+    let path = if args.len() >= 2 { Some(resolve_path(args[1])) } else { None };
+    let mut contents = if *PIPE_ACTIVE.lock() {
+        pipe_input()
+    } else if let Some(path) = path.as_ref() {
+        match ramfs_read(path) {
+            Some(data) => data,
+            None => {
+                if !ramfs_create(path, b"") {
+                    println!("edit: could not create '{}' (check the parent directory).", path);
+                    return;
+                }
+                Vec::new()
             }
-            Vec::new()
         }
+    } else {
+        pipe_input()
     };
     if contents.len() > EDITOR_MAX_BYTES {
-        println!("edit: '{}' exceeds the {} byte editor limit.", path, EDITOR_MAX_BYTES);
+        println!("edit: input exceeds the {} byte editor limit.", EDITOR_MAX_BYTES);
         return;
     }
 
     let mut cursor = contents.len();
     let (_, mut preferred_column) = editor_cursor_line_column(&contents, cursor);
-    editor_redraw(&path, &contents, cursor);
+    let display_path = path.as_deref().unwrap_or("<pipe>");
+    editor_redraw(display_path, &contents, cursor, false);
     loop {
         let key = keyboard_getchar();
         if key == 27 {
-            let saved = ramfs_write(&path, &contents, false);
             vga_set_color(VgaColor::LightGreen, VgaColor::Black);
-            println!("\n{} {} bytes to '{}'.", if saved { "Saved" } else { "Could not save" }, contents.len(), path);
+            if let Some(path) = path.as_ref() {
+                let saved = ramfs_write(path, &contents, false);
+                println!("\n{} {} bytes to '{}'.", if saved { "Saved" } else { "Could not save" }, contents.len(), path);
+            } else {
+                print!("\nSave as (blank discards changes): ");
+                let mut name_buf = [0u8; 128];
+                let name_len = shell_readline(&mut name_buf);
+                if name_len == 0 {
+                    println!("Changes discarded.");
+                } else if let Ok(name) = core::str::from_utf8(&name_buf[..name_len]) {
+                    let save_path = resolve_path(name.trim());
+                    let saved = ramfs_write(&save_path, &contents, false);
+                    if saved {
+                        println!("Saved {} bytes to '{}'.", contents.len(), save_path);
+                    } else {
+                        println!("Could not save '{}'.", save_path);
+                    }
+                } else {
+                    println!("Invalid filename; changes discarded.");
+                }
+            }
             vga_set_color(VgaColor::LightGrey, VgaColor::Black);
             return;
-        } else if key == KEY_LEFT {
-            if cursor > 0 {
-                cursor -= 1;
-                preferred_column = editor_cursor_line_column(&contents, cursor).1;
-                editor_redraw(&path, &contents, cursor);
-            }
-        } else if key == KEY_RIGHT {
-            if cursor < contents.len() {
-                cursor += 1;
-                preferred_column = editor_cursor_line_column(&contents, cursor).1;
-                editor_redraw(&path, &contents, cursor);
-            }
-        } else if key == KEY_UP || key == KEY_DOWN {
-            let (line, _) = editor_cursor_line_column(&contents, cursor);
-            let (_, line_end) = editor_line_bounds(&contents, line);
-            let target_line = if key == KEY_UP {
-                line.checked_sub(1)
-            } else if line_end < contents.len() {
-                Some(line + 1)
-            } else {
-                None
-            };
-            if let Some(target_line) = target_line {
-                let (target_start, target_end) = editor_line_bounds(&contents, target_line);
-                cursor = target_start + preferred_column.min(target_end - target_start);
-                editor_redraw(&path, &contents, cursor);
-            }
+        } else if move_text_cursor(&contents, &mut cursor, &mut preferred_column, key) {
+            editor_redraw(display_path, &contents, cursor, false);
         } else if key == b'\x08' {
             if cursor > 0 {
                 cursor -= 1;
                 contents.remove(cursor);
                 preferred_column = editor_cursor_line_column(&contents, cursor).1;
-                editor_redraw(&path, &contents, cursor);
+                editor_redraw(display_path, &contents, cursor, false);
             }
         } else if key == KEY_DELETE {
             if cursor < contents.len() {
                 contents.remove(cursor);
                 preferred_column = editor_cursor_line_column(&contents, cursor).1;
-                editor_redraw(&path, &contents, cursor);
+                editor_redraw(display_path, &contents, cursor, false);
             }
         } else if key == b'\n' || key == b'\r' {
             if contents.len() < EDITOR_MAX_BYTES {
                 contents.insert(cursor, b'\n');
                 cursor += 1;
                 preferred_column = 0;
-                editor_redraw(&path, &contents, cursor);
+                editor_redraw(display_path, &contents, cursor, false);
             }
         } else if (32..=126).contains(&key) && contents.len() < EDITOR_MAX_BYTES {
             contents.insert(cursor, key);
             cursor += 1;
             preferred_column = editor_cursor_line_column(&contents, cursor).1;
-            editor_redraw(&path, &contents, cursor);
+            editor_redraw(display_path, &contents, cursor, false);
+        }
+    }
+}
+
+fn cmd_less(args: &[&str]) {
+    if args.len() < 2 && !*PIPE_ACTIVE.lock() {
+        println!("Usage: less <path>");
+        return;
+    }
+    let (path, contents) = if args.len() >= 2 {
+        let path = resolve_path(args[1]);
+        let contents = match ramfs_read(&path) {
+            Some(contents) => contents,
+            None => {
+                println!("less: '{}' not found.", args[1]);
+                return;
+            }
+        };
+        (path, contents)
+    } else {
+        (String::from("<pipe>"), pipe_input())
+    };
+
+    let mut cursor = 0;
+    let mut preferred_column = 0;
+    editor_redraw(&path, &contents, cursor, true);
+    loop {
+        let key = keyboard_getchar();
+        if key == b'q' || key == 27 {
+            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+            println!("\nClosed '{}'.", path);
+            return;
+        }
+        if move_text_cursor(&contents, &mut cursor, &mut preferred_column, key) {
+            editor_redraw(&path, &contents, cursor, true);
         }
     }
 }
@@ -1097,9 +1177,14 @@ fn execute_pipeline(line: &str) -> bool {
         if let Some(command) = command {
             *PIPE_INPUT.lock() = input;
             *PIPE_ACTIVE.lock() = true;
-            vga_begin_capture();
-            (command.handler)(&args);
-            input = vga_end_capture();
+            if command.name == "less" || command.name == "edit" {
+                (command.handler)(&args);
+                input = Vec::new();
+            } else {
+                vga_begin_capture();
+                (command.handler)(&args);
+                input = vga_end_capture();
+            }
         } else {
             *PIPE_ACTIVE.lock() = false;
             *PIPE_INPUT.lock() = Vec::new();
