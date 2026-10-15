@@ -199,6 +199,8 @@ pub fn ramfs_init() {
         path.push_str(name);
         fs.create(&path, data);
     }
+
+    fs.create_dir("videos");
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
@@ -230,7 +232,7 @@ pub fn ramfs_delete(name: &str) -> bool {
 }
 
 pub fn ramfs_count() -> usize {
-    RAMFS.lock().count()
+    RAMFS.lock().count() + VIDEO_FILES.len()
 }
 
 pub fn ramfs_is_dir(path: &str) -> bool {
@@ -238,9 +240,23 @@ pub fn ramfs_is_dir(path: &str) -> bool {
 }
 
 pub fn ramfs_count_in(path: &str) -> usize {
-    RAMFS.lock().count_in(path)
+    let count = RAMFS.lock().count_in(path);
+    if path == "videos" { count + VIDEO_FILES.len() } else { count }
+}
+
+pub fn ramfs_video_metadata(name: &str) -> Option<(u32, usize)> {
+    VIDEO_FILES
+        .iter()
+        .find(|(video_name, _, _)| *video_name == name)
+        .map(|(_, start_sector, size)| (*start_sector, *size as usize))
 }
 
 pub fn ramfs_list<F: FnMut(&str, usize, bool)>(path: &str, cb: F) {
-    RAMFS.lock().list(path, cb);
+    let mut callback = cb;
+    RAMFS.lock().list(path, &mut callback);
+    if path == "videos" {
+        for &(name, _, size) in VIDEO_FILES {
+            callback(name, size as usize, false);
+        }
+    }
 }
