@@ -79,7 +79,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 |        (core::fmt, alloc::vec::Vec, alloc::string::String)  |
 +-------------------------------------------------------------+
 |                       Device Drivers                        |
-|  VGA 80x25 Text | PS/2 Keyboard | PIT 8253 | CMOS RTC | COM1|
+|  VGA 80x25 Text | PS/2 Keyboard | PIT 8253 | CMOS RTC | ATA PIO | COM1|
 +-------------------------------------------------------------+
 |                 x86 Interrupt Subsystem                     |
 |  256-Entry IDT | 8259 PIC Remapper | ISR Stubs & Panic Dump  |
@@ -113,11 +113,13 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 ### 4. RAMFS Virtual Filesystem (`src/fs/ramfs.rs`)
 - Dynamic in-memory virtual filesystem backed by the heap.
 - Supports file creation, resizing, reading, appending, and deletion.
-- Prepopulated with default text files and an `/images/` directory containing `cat.rgb332` and `billi.rgb332` (320x200 raw RGB332 pixels each).
+- Prepopulated with default text files, an `/images/` directory for RGB332 stills, and a `/videos/` directory for PweOS video clips stored on a companion data disk.
 
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
 - The `image <path>` command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. Paths can be absolute or relative to the current directory. Press Escape to restore text mode and clear the shell screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
+- The `video <path>` command plays 320x200 RGB332 clips from `/videos/`. PWEV files use periodic run-length keyframes plus changed-pixel delta frames. Video data lives on a separate raw IDE disk image, so it does not consume the kernel boot image's 448 KiB load limit. Press any key to return to the shell. Playback uses the shared framebuffer in `src/drivers/framebuffer.rs`.
+- Includes `/videos/demo.pwevid`, a short moving color-block clip for trying the player immediately.
 - The `cube` command demonstrates the `Framebuffer` pixel and line API in `src/drivers/framebuffer.rs`. It continuously rotates a colored wireframe cube in the 320x200 RGB332 framebuffer; press any key to restore text mode and return to the shell.
 - Supports 16 foreground and 16 background colors.
 - Handles `\n`, `\r`, `\t`, backspace (`\b`), and screen scrolling.
@@ -134,6 +136,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **PIT 8253 Timer (`timer.rs`)**: Channel 0 timer running at 100 Hz on IRQ0, tracking system ticks, elapsed uptime, and supporting `timer_sleep()`.
 - **PS/2 Keyboard (`keyboard.rs`)**: Decodes Scancode Set 1 on IRQ1 with extended key prefix `0xE0` support for arrow keys (Up, Down, Left, Right). Handles Shift and Caps Lock, buffers keystrokes in a thread-safe ring buffer, and supports headless ANSI serial input from COM1.
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
+- **ATA PIO (`ata.rs`)**: Reads video assets from the companion primary-master IDE disk without loading large video files into the kernel image.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
 
 ### 8. Interactive Shell (`src/shell/`)
@@ -165,6 +168,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
 | `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
+| `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
@@ -198,6 +202,12 @@ PweOS/
 ├── Makefile                 # Build system & QEMU targets
 ├── README.md                # Documentation & Architecture overview
 ├── linker.ld                # Linker script (entry at 0x10000)
+├── build.rs                 # Bundles image and video metadata
+├── assets/                  # RGB332 stills and PWEV clips
+├── tools/
+│   ├── image_to_rgb332.py   # Convert still images for the OS
+│   ├── video_to_pwe.py      # Convert video clips for the OS
+│   └── pack_videos.py       # Build the companion video disk
 ├── boot/
 │   └── boot.asm             # Stage 1 MBR Bootloader (16-bit to 32-bit switch)
 └── src/
@@ -215,6 +225,8 @@ PweOS/
     │   └── pic.rs           # 8259 Programmable Interrupt Controller
     ├── drivers/
     │   ├── mod.rs           # Drivers module root
+    │   ├── ata.rs           # Primary-master ATA PIO reads for video storage
+    │   ├── framebuffer.rs   # VGA RGB332 pixel, line, and triangle drawing
     │   ├── keyboard.rs      # PS/2 keyboard & serial input with arrow keys
     │   ├── rtc.rs           # CMOS Real-Time Clock driver
     │   ├── serial.rs        # COM1 UART serial port driver (38400 baud, 8N1)
@@ -227,7 +239,8 @@ PweOS/
     │   ├── mod.rs           # Memory management module root
     │   └── heap.rs          # Dynamic kernel heap allocator & GlobalAlloc
     └── shell/
-        └── mod.rs           # Interactive shell with history and 22 builtins
+        ├── video.rs         # PWEV frame decoding and playback
+        └── mod.rs           # Interactive shell and builtin commands
 ```
 
 ---
@@ -260,6 +273,18 @@ uv run tools/image_to_rgb332.py path/to/photo.jpg
 ```
 
 The converter writes `assets/photo.rgb332` at 320x200, preserving the source aspect ratio with black padding where needed. Use `--output assets/custom-name.rgb332` to choose another bundled name. Every `.rgb332` file directly inside `assets/` is bundled into RAMFS automatically on the next build and appears under `/images/`; view it with `image /images/photo.rgb332`. The first `uv run` may download Pillow.
+
+### Add a video
+
+Convert a short video supported by ffmpeg to PweOS's compact framebuffer format:
+
+```bash
+uv run tools/video_to_pwe.py path/to/clip.mp4 --fps 10 --seconds 3
+```
+
+The converter writes `assets/clip.pwevid` by default. Every `.pwevid` directly inside `assets/` is packed into `build/videos.img` and listed under `/videos/`; the Makefile attaches this as a companion IDE disk when starting QEMU. After rebuilding, play it with `video /videos/clip.pwevid`. The format is 320x200 RGB332 with periodic keyframes and frame-to-frame deltas. Playback currently limits a clip to 1.5 MB to fit the kernel heap. Install ffmpeg on the host first. Press any key during playback to return to the shell.
+
+Try the included animation first with `video /videos/demo.pwevid`.
 
 ### Build the OS image
 ```bash

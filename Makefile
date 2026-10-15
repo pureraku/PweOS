@@ -16,6 +16,8 @@ BUILD = build
 BOOT_BIN = $(BUILD)/boot.bin
 KERNEL_BIN = $(BUILD)/kernel.bin
 IMAGE = $(BUILD)/pweos.img
+VIDEO_IMAGE = $(BUILD)/videos.img
+VIDEO_DRIVE = -drive file=$(VIDEO_IMAGE),format=raw,if=ide,index=0
 
 ENTRY_OBJ = $(BUILD)/entry.asm.o
 ISR_OBJ = $(BUILD)/isr.asm.o
@@ -25,7 +27,7 @@ LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
 
 .PHONY: all run run-fullscreen run-curses run-serial run-headless clean check clippy
 
-all: $(IMAGE)
+all: $(IMAGE) $(VIDEO_IMAGE)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -40,7 +42,7 @@ $(ENTRY_OBJ): src/arch/entry.asm | $(BUILD)
 $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) build.rs Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(KERNEL_LIB)
@@ -51,20 +53,23 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 	cat $(BOOT_BIN) $(KERNEL_BIN) > $(IMAGE)
 	truncate -s 1440K $(IMAGE)
 
-run: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_DISPLAY)
+$(VIDEO_IMAGE): $(wildcard assets/*.pwevid) tools/pack_videos.py | $(BUILD)
+	python3 tools/pack_videos.py assets $(VIDEO_IMAGE)
 
-run-fullscreen: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_FULLSCREEN)
+run: $(IMAGE) $(VIDEO_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_DISPLAY)
 
-run-curses: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display curses
+run-fullscreen: $(IMAGE) $(VIDEO_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_FULLSCREEN)
 
-run-serial: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(QEMU_DISPLAY) -serial stdio
+run-curses: $(IMAGE) $(VIDEO_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) -display curses
 
-run-headless: $(IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy -display none -serial stdio
+run-serial: $(IMAGE) $(VIDEO_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_DISPLAY) -serial stdio
+
+run-headless: $(IMAGE) $(VIDEO_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) -display none -serial stdio
 
 check:
 	$(CARGO) check
