@@ -35,6 +35,7 @@ PweOS Builtin Commands:
   history    - Display command history buffer
   ls         - List files and directories in in-memory RAM filesystem
   mkdir      - Create a directory: mkdir <name>
+  rmdir      - Remove an empty directory: rmdir <path>
   cd         - Change directory: cd <path>
   pwd        - Print the current working directory
   cat        - Display file contents: cat <filename>
@@ -151,6 +152,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |
 | `mkdir` | `mkdir <path>` | Creates a directory under an existing parent directory |
+| `rmdir` | `rmdir <path>` | Removes an empty directory |
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |

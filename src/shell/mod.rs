@@ -11,7 +11,7 @@ use crate::drivers::vga::{
     vga_clear, vga_putchar, vga_set_color, vga_set_cursor_position, VgaColor, VGA_HEIGHT, VGA_WIDTH,
 };
 use crate::fs::ramfs::{
-    ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_is_dir, ramfs_list,
+    ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_delete_dir, ramfs_is_dir, ramfs_list,
     ramfs_read, ramfs_write,
 };
 use crate::mm::heap::heap_get_stats;
@@ -156,6 +156,11 @@ static COMMANDS: &[Command] = &[
         name: "mkdir",
         desc: "Create a directory: mkdir <name>",
         handler: cmd_mkdir,
+    },
+    Command {
+        name: "rmdir",
+        desc: "Remove an empty directory: rmdir <path>",
+        handler: cmd_rmdir,
     },
     Command {
         name: "cd",
@@ -350,6 +355,25 @@ fn cmd_mkdir(args: &[&str]) {
         println!("Created directory '{}/'.", path);
     } else {
         println!("Directory '{}' is invalid or already exists.", args[1]);
+    }
+}
+
+fn cmd_rmdir(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: rmdir <path>");
+        return;
+    }
+    let path = resolve_path(args[1]);
+    if path == current_directory() {
+        println!("rmdir: cannot remove the current working directory.");
+        return;
+    }
+    if ramfs_delete_dir(&path) {
+        println!("Removed directory '{}/'.", path);
+    } else if ramfs_is_dir(&path) {
+        println!("rmdir: '{}' is not empty.", args[1]);
+    } else {
+        println!("rmdir: '{}' is not a directory.", args[1]);
     }
 }
 
