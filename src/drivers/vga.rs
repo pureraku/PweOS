@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use super::serial::{serial_init, serial_putchar};
 use crate::arch::io::outb;
 use crate::sync::Spinlock;
@@ -43,6 +44,7 @@ pub struct VgaWriter {
     pub col: usize,
     pub row: usize,
     pub current_color: u8,
+    capture: Option<Vec<u8>>,
 }
 
 unsafe impl Send for VgaWriter {}
@@ -54,6 +56,7 @@ impl VgaWriter {
             col: 0,
             row: 0,
             current_color: 0x07, // Light grey on black
+            capture: None,
         }
     }
 }
@@ -136,6 +139,11 @@ impl VgaWriter {
     }
 
     pub fn putchar(&mut self, c: u8) {
+        if let Some(output) = self.capture.as_mut() {
+            output.push(c);
+            return;
+        }
+
         // Send to serial port
         if c == b'\n' {
             serial_putchar(b'\r');
@@ -192,6 +200,14 @@ impl VgaWriter {
         }
     }
 
+    pub fn begin_capture(&mut self) {
+        self.capture = Some(Vec::new());
+    }
+
+    pub fn end_capture(&mut self) -> Vec<u8> {
+        self.capture.take().unwrap_or_default()
+    }
+
     pub fn set_cursor(&mut self, col: usize, row: usize) {
         self.col = if col >= VGA_WIDTH { VGA_WIDTH - 1 } else { col };
         self.row = if row >= VGA_HEIGHT {
@@ -242,6 +258,14 @@ pub fn vga_putchar(c: u8) {
 
 pub fn vga_set_cursor_position(row: usize, col: usize) {
     VGA_WRITER.lock().set_cursor_position(row, col);
+}
+
+pub fn vga_begin_capture() {
+    VGA_WRITER.lock().begin_capture();
+}
+
+pub fn vga_end_capture() -> Vec<u8> {
+    VGA_WRITER.lock().end_capture()
 }
 
 pub fn vga_puts(str: &str) {

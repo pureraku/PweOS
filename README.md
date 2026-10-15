@@ -40,6 +40,7 @@ PweOS Builtin Commands:
   cd         - Change directory: cd <path>
   pwd        - Print the current working directory
   cat        - Display file contents: cat <filename>
+  grep       - Filter piped lines: grep <text>
   touch      - Create empty file: touch <filename>
   write      - Write one line: write <filename> <text>
   edit       - Edit multiline files: edit <path> (Escape saves)
@@ -158,6 +159,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
+| `grep` | `grep <text>` | Prints lines from piped input that contain the text |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
 | `edit` | `edit <path>` | Opens a multiline editor; arrows move the cursor, Enter inserts a newline, Backspace/Delete erase, and Escape saves |
@@ -169,6 +171,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `reboot` | `reboot` | Restarts the machine via 8042 keyboard controller reset line |
 | `panic` | `panic` | Triggers a division-by-zero exception to demonstrate the crash handler |
 | `about` | `about` | Displays system architecture and component specifications |
+
+Commands can be connected with `|` to pass output to the next command. For example, `cat notes.txt | grep TODO` filters a file, and `cat notes.txt | write copy.txt` writes its contents to another file.
 
 ---
 

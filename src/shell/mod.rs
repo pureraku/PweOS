@@ -8,7 +8,8 @@ use crate::drivers::keyboard::{keyboard_getchar, KEY_DELETE, KEY_DOWN, KEY_LEFT,
 use crate::drivers::rtc::rtc_get_datetime;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
 use crate::drivers::vga::{
-    vga_clear, vga_putchar, vga_set_color, vga_set_cursor_position, VgaColor, VGA_HEIGHT, VGA_WIDTH,
+    vga_begin_capture, vga_clear, vga_end_capture, vga_putchar, vga_set_color,
+    vga_set_cursor_position, VgaColor, VGA_HEIGHT, VGA_WIDTH,
 };
 use crate::fs::ramfs::{
     ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_delete_dir, ramfs_is_dir,
@@ -58,6 +59,12 @@ use crate::sync::Spinlock;
 
 static HISTORY: Spinlock<ShellHistory> = Spinlock::new(ShellHistory::new());
 static WORKING_DIRECTORY: Spinlock<String> = Spinlock::new(String::new());
+static PIPE_INPUT: Spinlock<Vec<u8>> = Spinlock::new(Vec::new());
+static PIPE_ACTIVE: Spinlock<bool> = Spinlock::new(false);
+
+fn pipe_input() -> Vec<u8> {
+    PIPE_INPUT.lock().clone()
+}
 
 fn resolve_path(path: &str) -> String {
     let mut resolved = if path.starts_with('/') {
@@ -179,8 +186,13 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "cat",
-        desc: "Display file contents: cat <filename>",
+        desc: "Display file or piped input: cat [filename]",
         handler: cmd_cat,
+    },
+    Command {
+        name: "grep",
+        desc: "Print input lines containing text: grep <text>",
+        handler: cmd_grep,
     },
     Command {
         name: "touch",
@@ -418,12 +430,24 @@ fn cmd_pwd(_args: &[&str]) {
 
 fn cmd_cat(args: &[&str]) {
     if args.len() < 2 {
-        println!("Usage: cat <filename>");
+        if *PIPE_ACTIVE.lock() {
+            for byte in pipe_input() {
+                vga_putchar(byte);
+            }
+        } else {
+            println!("Usage: cat <filename>");
+        }
         return;
     }
     let path = resolve_path(args[1]);
     match ramfs_read(&path) {
         Some(data) => {
+            if *PIPE_ACTIVE.lock() {
+                for &byte in &data {
+                    vga_putchar(byte);
+                }
+                return;
+            }
             if let Ok(text) = core::str::from_utf8(&data) {
                 print!("{}", text);
                 if !data.ends_with(b"\n") {
@@ -446,6 +470,35 @@ fn cmd_cat(args: &[&str]) {
     }
 }
 
+fn cmd_grep(args: &[&str]) {
+    if args.len() < 2 || !*PIPE_ACTIVE.lock() {
+        println!("Usage: grep <text> (reads from a pipe)");
+        return;
+    }
+    let input = pipe_input();
+    let needle = args[1].as_bytes();
+    let mut line_start = 0;
+    for index in 0..input.len() {
+        if input[index] == b'\n' {
+            let line = &input[line_start..=index];
+            if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
+                for &byte in line {
+                    vga_putchar(byte);
+                }
+            }
+            line_start = index + 1;
+        }
+    }
+    if line_start < input.len() {
+        let line = &input[line_start..];
+        if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
+            for &byte in line {
+                vga_putchar(byte);
+            }
+        }
+    }
+}
+
 fn cmd_touch(args: &[&str]) {
     if args.len() < 2 {
         println!("Usage: touch <filename>");
@@ -460,23 +513,28 @@ fn cmd_touch(args: &[&str]) {
 }
 
 fn cmd_write(args: &[&str]) {
-    if args.len() < 3 {
+    if args.len() < 2 || (args.len() < 3 && !*PIPE_ACTIVE.lock()) {
         println!("Usage: write <filename> <text...>");
         return;
     }
 
-    let mut content = String::new();
-    for (i, &arg) in args.iter().enumerate().skip(2) {
-        if i > 2 {
-            content.push(' ');
+    let content = if args.len() == 2 && *PIPE_ACTIVE.lock() {
+        pipe_input()
+    } else {
+        let mut text = String::new();
+        for (i, &arg) in args.iter().enumerate().skip(2) {
+            if i > 2 {
+                text.push(' ');
+            }
+            text.push_str(arg);
         }
-        content.push_str(arg);
-    }
-    content.push('\n');
+        text.push('\n');
+        text.into_bytes()
+    };
 
     let len = content.len();
     let path = resolve_path(args[1]);
-    if ramfs_write(&path, content.as_bytes(), false) {
+    if ramfs_write(&path, &content, false) {
         println!("Wrote {} bytes to '{}'. :3", len, path);
     } else {
         println!("Failed to write to '{}'. :(", args[1]);
@@ -1019,6 +1077,48 @@ fn shell_readline(buffer: &mut [u8]) -> usize {
     }
 }
 
+fn execute_pipeline(line: &str) -> bool {
+    if !line.contains('|') {
+        return false;
+    }
+
+    let mut input = Vec::new();
+    let stages: Vec<&str> = line.split('|').collect();
+    for stage in stages {
+        let args: Vec<&str> = stage.split_whitespace().collect();
+        if args.is_empty() {
+            *PIPE_ACTIVE.lock() = false;
+            *PIPE_INPUT.lock() = Vec::new();
+            println!("Syntax error: missing command around '|'.");
+            return true;
+        }
+
+        let command = COMMANDS.iter().find(|command| command.name == args[0]);
+        if let Some(command) = command {
+            *PIPE_INPUT.lock() = input;
+            *PIPE_ACTIVE.lock() = true;
+            vga_begin_capture();
+            (command.handler)(&args);
+            input = vga_end_capture();
+        } else {
+            *PIPE_ACTIVE.lock() = false;
+            *PIPE_INPUT.lock() = Vec::new();
+            vga_set_color(VgaColor::LightRed, VgaColor::Black);
+            println!("Unknown command: '{}'. Type 'help' for command list.", args[0]);
+            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+            return true;
+        }
+    }
+
+    *PIPE_ACTIVE.lock() = false;
+    *PIPE_INPUT.lock() = Vec::new();
+    vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+    for byte in input {
+        vga_putchar(byte);
+    }
+    true
+}
+
 pub fn shell_run() -> ! {
     let mut line_buf = [0u8; 256];
 
@@ -1050,6 +1150,10 @@ pub fn shell_run() -> ! {
         }
 
         HISTORY.lock().add(line_str);
+
+        if execute_pipeline(line_str) {
+            continue;
+        }
 
         let args: Vec<&str> = line_str.split_whitespace().collect();
         if args.is_empty() {
