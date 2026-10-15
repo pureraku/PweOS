@@ -156,7 +156,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cat` | `cat <filename>` | Displays the contents of a file |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
-| `edit` | `edit <path>` | Opens a multiline editor; Enter inserts a newline, Backspace erases, and Escape saves |
+| `edit` | `edit <path>` | Opens a multiline editor; arrows move the cursor, Enter inserts a newline, Backspace/Delete erase, and Escape saves |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |
 | `color` | `color <fg> [bg]` | Changes console foreground and optional background color |

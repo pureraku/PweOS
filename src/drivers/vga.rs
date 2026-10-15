@@ -106,6 +106,12 @@ impl VgaWriter {
         }
     }
 
+    pub fn set_cursor_position(&mut self, row: usize, col: usize) {
+        self.row = row.min(VGA_HEIGHT - 1);
+        self.col = col.min(VGA_WIDTH - 1);
+        self.update_hardware_cursor();
+    }
+
     pub fn scroll(&mut self) {
         for y in 0..(VGA_HEIGHT - 1) {
             for x in 0..VGA_WIDTH {
@@ -232,6 +238,10 @@ pub fn vga_set_raw_color(color: u8) {
 
 pub fn vga_putchar(c: u8) {
     VGA_WRITER.lock().putchar(c);
+}
+
+pub fn vga_set_cursor_position(row: usize, col: usize) {
+    VGA_WRITER.lock().set_cursor_position(row, col);
 }
 
 pub fn vga_puts(str: &str) {

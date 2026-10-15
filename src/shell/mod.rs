@@ -4,10 +4,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use crate::arch::cpu::cpu_get_info;
 use crate::arch::io::{inb, outb};
-use crate::drivers::keyboard::{keyboard_getchar, KEY_DOWN, KEY_UP};
+use crate::drivers::keyboard::{keyboard_getchar, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
 use crate::drivers::rtc::rtc_get_datetime;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
-use crate::drivers::vga::{vga_clear, vga_putchar, vga_set_color, VgaColor};
+use crate::drivers::vga::{
+    vga_clear, vga_putchar, vga_set_color, vga_set_cursor_position, VgaColor, VGA_HEIGHT, VGA_WIDTH,
+};
 use crate::fs::ramfs::{
     ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_is_dir, ramfs_list,
     ramfs_read, ramfs_write,
@@ -182,7 +184,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "edit",
-        desc: "Edit a multiline file: edit <path> (Escape saves)",
+        desc: "Edit a multiline file with arrows: edit <path> (Escape saves)",
         handler: cmd_edit,
     },
     Command {
@@ -432,21 +434,74 @@ fn cmd_write(args: &[&str]) {
     }
 }
 
-fn editor_redraw(path: &str, contents: &[u8]) {
+fn editor_line_bounds(contents: &[u8], line: usize) -> (usize, usize) {
+    let mut current_line = 0;
+    let mut start = 0;
+    for (index, &byte) in contents.iter().enumerate() {
+        if current_line == line {
+            if byte == b'\n' {
+                return (start, index);
+            }
+        } else if byte == b'\n' {
+            current_line += 1;
+            start = index + 1;
+        }
+    }
+    if current_line == line {
+        (start, contents.len())
+    } else {
+        (contents.len(), contents.len())
+    }
+}
+
+fn editor_cursor_line_column(contents: &[u8], cursor: usize) -> (usize, usize) {
+    let mut line = 0;
+    let mut column = 0;
+    for &byte in contents.iter().take(cursor) {
+        if byte == b'\n' {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
+}
+
+fn editor_redraw(path: &str, contents: &[u8], cursor: usize) {
     vga_clear();
     vga_set_color(VgaColor::LightCyan, VgaColor::Black);
     println!("PweOS editor — {}", path);
     vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-    println!("Type to insert, Enter for a new line, Backspace to erase.");
-    println!("Press Escape to save and return to the shell.");
+    println!("Arrows move | Enter inserts a line | Backspace/Delete erase");
+    println!("Escape saves and returns to the shell.");
     println!("----------------------------------------------------");
-    for &byte in contents {
-        if byte == b'\n' || byte == b'\r' || byte == b'\t' || (32..=126).contains(&byte) {
-            vga_putchar(byte);
-        } else {
-            vga_putchar(b'.');
+
+    const HEADER_ROWS: usize = 4;
+    let (cursor_line, cursor_column) = editor_cursor_line_column(contents, cursor);
+    let view_rows = VGA_HEIGHT - HEADER_ROWS;
+    let first_line = cursor_line.saturating_sub(view_rows - 1);
+    let horizontal_offset = cursor_column.saturating_sub(VGA_WIDTH - 2);
+    for row in 0..view_rows {
+        let line = first_line + row;
+        let (start, end) = editor_line_bounds(contents, line);
+        let skip = if line == cursor_line { horizontal_offset } else { 0 };
+        for &byte in contents[start..end].iter().skip(skip).take(VGA_WIDTH - 1) {
+            if byte == b'\t' {
+                vga_putchar(b' ');
+            } else if (32..=126).contains(&byte) {
+                vga_putchar(byte);
+            } else {
+                vga_putchar(b'.');
+            }
+        }
+        if row + 1 < view_rows {
+            vga_putchar(b'\n');
         }
     }
+    let screen_row = HEADER_ROWS + cursor_line - first_line;
+    let screen_column = cursor_column.saturating_sub(horizontal_offset);
+    vga_set_cursor_position(screen_row, screen_column);
 }
 
 fn cmd_edit(args: &[&str]) {
@@ -472,7 +527,9 @@ fn cmd_edit(args: &[&str]) {
         return;
     }
 
-    editor_redraw(&path, &contents);
+    let mut cursor = contents.len();
+    let (_, mut preferred_column) = editor_cursor_line_column(&contents, cursor);
+    editor_redraw(&path, &contents, cursor);
     loop {
         let key = keyboard_getchar();
         if key == 27 {
@@ -481,18 +538,58 @@ fn cmd_edit(args: &[&str]) {
             println!("\n{} {} bytes to '{}'.", if saved { "Saved" } else { "Could not save" }, contents.len(), path);
             vga_set_color(VgaColor::LightGrey, VgaColor::Black);
             return;
+        } else if key == KEY_LEFT {
+            if cursor > 0 {
+                cursor -= 1;
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                editor_redraw(&path, &contents, cursor);
+            }
+        } else if key == KEY_RIGHT {
+            if cursor < contents.len() {
+                cursor += 1;
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                editor_redraw(&path, &contents, cursor);
+            }
+        } else if key == KEY_UP || key == KEY_DOWN {
+            let (line, _) = editor_cursor_line_column(&contents, cursor);
+            let (_, line_end) = editor_line_bounds(&contents, line);
+            let target_line = if key == KEY_UP {
+                line.checked_sub(1)
+            } else if line_end < contents.len() {
+                Some(line + 1)
+            } else {
+                None
+            };
+            if let Some(target_line) = target_line {
+                let (target_start, target_end) = editor_line_bounds(&contents, target_line);
+                cursor = target_start + preferred_column.min(target_end - target_start);
+                editor_redraw(&path, &contents, cursor);
+            }
         } else if key == b'\x08' {
-            if contents.pop().is_some() {
-                editor_redraw(&path, &contents);
+            if cursor > 0 {
+                cursor -= 1;
+                contents.remove(cursor);
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                editor_redraw(&path, &contents, cursor);
+            }
+        } else if key == KEY_DELETE {
+            if cursor < contents.len() {
+                contents.remove(cursor);
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                editor_redraw(&path, &contents, cursor);
             }
         } else if key == b'\n' || key == b'\r' {
             if contents.len() < EDITOR_MAX_BYTES {
-                contents.push(b'\n');
-                vga_putchar(b'\n');
+                contents.insert(cursor, b'\n');
+                cursor += 1;
+                preferred_column = 0;
+                editor_redraw(&path, &contents, cursor);
             }
         } else if (32..=126).contains(&key) && contents.len() < EDITOR_MAX_BYTES {
-            contents.push(key);
-            vga_putchar(key);
+            contents.insert(cursor, key);
+            cursor += 1;
+            preferred_column = editor_cursor_line_column(&contents, cursor).1;
+            editor_redraw(&path, &contents, cursor);
         }
     }
 }

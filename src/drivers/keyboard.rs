@@ -9,6 +9,7 @@ pub const KEY_UP: u8 = 0x81;
 pub const KEY_DOWN: u8 = 0x82;
 pub const KEY_LEFT: u8 = 0x83;
 pub const KEY_RIGHT: u8 = 0x84;
+pub const KEY_DELETE: u8 = 0x85;
 
 pub const KEYBOARD_DATA_PORT: u16 = 0x60;
 pub const KEYBOARD_STATUS_PORT: u16 = 0x64;
@@ -123,6 +124,8 @@ fn keyboard_callback(_regs: &mut Registers) {
             state.push(KEY_LEFT);
         } else if scancode == 0x4D {
             state.push(KEY_RIGHT);
+        } else if scancode == 0x53 {
+            state.push(KEY_DELETE);
         }
         return;
     }
@@ -219,6 +222,9 @@ pub fn keyboard_getchar() -> u8 {
                         }
                         if code == b'D' {
                             return KEY_LEFT;
+                        }
+                        if code == b'3' && serial_has_byte() && serial_getchar() == b'~' {
+                            return KEY_DELETE;
                         }
                     }
                 }
