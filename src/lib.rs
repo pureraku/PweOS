@@ -63,6 +63,7 @@ pub extern "C" fn kmain() -> ! {
         VGA_WIDTH, VGA_HEIGHT
     );
     println!("[+] Serial: COM1 active at port 0x3f8 (38400 baud, 8N1)\n");
+    println!("[+] Video storage: ATA primary-master PIO data disk\n");
 
     shell_init();
     shell_run();

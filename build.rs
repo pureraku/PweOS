@@ -18,9 +18,7 @@ fn main() {
     let mut generated = String::from("pub static BUNDLED_IMAGES: &[(&str, &[u8])] = &[\n");
     for image in images {
         println!("cargo:rerun-if-changed={}", image.display());
-        let Some(name) = image.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
+        let Some(name) = image.file_name().and_then(|name| name.to_str()) else { continue };
         assert!(name.len() < 32, "image filename is too long for RAMFS: {name}");
         assert_eq!(
             fs::metadata(&image).unwrap().len(),
@@ -34,6 +32,26 @@ fn main() {
             name,
             image.to_string_lossy()
         ));
+    }
+    generated.push_str("];\n\npub static VIDEO_FILES: &[(&str, u32, u32)] = &[\n");
+    let mut videos: Vec<_> = fs::read_dir(&assets)
+        .expect("assets directory must exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "pwevid"))
+        .collect();
+    videos.sort();
+    assert!(videos.len() <= 12, "the video disk index supports at most 12 videos");
+    let mut next_sector = 1u32; // Sector zero is the video's index table.
+    for video in videos {
+        println!("cargo:rerun-if-changed={}", video.display());
+        let Some(name) = video.file_name().and_then(|name| name.to_str()) else { continue };
+        assert!(name.len() < 32, "video filename is too long for RAMFS: {name}");
+        let bytes = fs::read(&video).unwrap();
+        assert!(bytes.starts_with(b"PWEV"), "invalid PweOS video: {}", video.display());
+        let sectors = bytes.len().div_ceil(512) as u32;
+        generated.push_str(&format!("    ({:?}, {}, {}),\n", name, next_sector, bytes.len()));
+        next_sector += sectors;
     }
     generated.push_str("];\n");
 
