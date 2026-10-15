@@ -4,7 +4,7 @@ mod image;
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::arch::cpu::cpu_get_info;
-use crate::arch::io::{inb, outb};
+use crate::arch::io::{inb, outb, outw};
 use crate::drivers::keyboard::{keyboard_getchar, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
 use crate::drivers::rtc::rtc_get_datetime;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
@@ -249,6 +249,11 @@ static COMMANDS: &[Command] = &[
         name: "reboot",
         desc: "Reboot the system",
         handler: cmd_reboot,
+    },
+    Command {
+        name: "poweroff",
+        desc: "Power off the machine",
+        handler: cmd_poweroff,
     },
     Command {
         name: "panic",
@@ -1091,6 +1096,21 @@ fn cmd_reboot(_args: &[&str]) {
             in(reg) &null_idt,
             options(noreturn)
         );
+    }
+}
+
+fn cmd_poweroff(_args: &[&str]) {
+    println!("Powering off PweOS...");
+    timer_sleep(20);
+
+    // QEMU and Bochs expose ACPI shutdown through these emulator ports.
+    unsafe {
+        outw(0x604, 0x2000);
+        outw(0xB004, 0x2000);
+        core::arch::asm!("cli");
+        loop {
+            core::arch::asm!("hlt");
+        }
     }
 }
 

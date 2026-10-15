@@ -51,6 +51,7 @@ PweOS Builtin Commands:
   sleep      - Delay execution for N seconds
   peek       - Read byte from memory: peek <hex_addr>
   reboot     - Reboot the system
+  poweroff   - Power off the machine
   panic      - Trigger kernel panic (exception test)
   about      - Information about PweOS system
 -----------------------:3----------------------------
@@ -174,6 +175,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `sleep` | `sleep <seconds>` | Delays execution for N seconds using timer interrupts |
 | `peek` | `peek <hex_addr>` | Reads and displays the byte stored at physical memory address |
 | `reboot` | `reboot` | Restarts the machine via 8042 keyboard controller reset line |
+| `poweroff` | `poweroff` | Powers off QEMU/Bochs through their ACPI shutdown ports; otherwise halts the CPU |
 | `panic` | `panic` | Triggers a division-by-zero exception to demonstrate the crash handler |
 | `about` | `about` | Displays system architecture and component specifications |
 
