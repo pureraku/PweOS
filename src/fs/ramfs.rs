@@ -75,6 +75,23 @@ impl Ramfs {
         }
     }
 
+    pub fn nuke(&mut self, path: &str) -> bool {
+        if path.is_empty() {
+            return false;
+        }
+        let file_exists = self.files.iter().any(|file| file.name == path);
+        let dir_exists = self.directories.iter().any(|dir| dir == path);
+        if !file_exists && !dir_exists {
+            return false;
+        }
+
+        let mut prefix = String::from(path);
+        prefix.push('/');
+        self.files.retain(|file| file.name != path && !file.name.starts_with(&prefix));
+        self.directories.retain(|dir| dir != path && !dir.starts_with(&prefix));
+        true
+    }
+
     pub fn dir_exists(&self, path: &str) -> bool {
         path.is_empty() || self.directories.iter().any(|dir| dir == path)
     }
@@ -185,6 +202,10 @@ pub fn ramfs_create_dir(name: &str) -> bool {
 
 pub fn ramfs_delete_dir(path: &str) -> bool {
     RAMFS.lock().delete_dir(path)
+}
+
+pub fn ramfs_nuke(path: &str) -> bool {
+    RAMFS.lock().nuke(path)
 }
 
 pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
