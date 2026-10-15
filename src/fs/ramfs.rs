@@ -13,11 +13,12 @@ pub struct RamfsNode {
 
 pub struct Ramfs {
     files: Vec<RamfsNode>,
+    directories: Vec<String>,
 }
 
 impl Ramfs {
     pub const fn new() -> Self {
-        Self { files: Vec::new() }
+        Self { files: Vec::new(), directories: Vec::new() }
     }
 }
 
@@ -38,7 +39,8 @@ impl Ramfs {
     }
 
     pub fn create(&mut self, name: &str, initial_data: &[u8]) -> bool {
-        if name.is_empty() || name.len() >= RAMFS_MAX_NAME {
+        if !valid_path(name) || self.directories.iter().any(|dir| dir == name)
+            || !self.dir_exists(parent_path(name)) {
             return false;
         }
         if self.find(name).is_some() {
@@ -50,6 +52,37 @@ impl Ramfs {
             data: initial_data.to_vec(),
         });
         true
+    }
+
+    pub fn create_dir(&mut self, name: &str) -> bool {
+        if !valid_path(name) || self.find(name).is_some() || self.directories.iter().any(|dir| dir == name)
+            || !self.dir_exists(parent_path(name)) {
+            return false;
+        }
+        self.directories.push(String::from(name));
+        true
+    }
+
+    pub fn dir_exists(&self, path: &str) -> bool {
+        path.is_empty() || self.directories.iter().any(|dir| dir == path)
+    }
+
+    pub fn count_in(&self, path: &str) -> usize {
+        self.directories.iter().filter(|dir| parent_path(dir) == path).count()
+            + self.files.iter().filter(|file| parent_path(&file.name) == path).count()
+    }
+
+    pub fn list<F: FnMut(&str, usize, bool)>(&self, path: &str, mut cb: F) {
+        for directory in &self.directories {
+            if parent_path(directory) == path {
+                cb(base_name(directory), 0, true);
+            }
+        }
+        for file in &self.files {
+            if parent_path(&file.name) == path {
+                cb(base_name(&file.name), file.data.len(), false);
+            }
+        }
     }
 
     pub fn read(&self, name: &str) -> Option<Vec<u8>> {
@@ -84,8 +117,22 @@ impl Ramfs {
     }
 
     pub fn count(&self) -> usize {
-        self.files.len()
+        self.files.len() + self.directories.len()
     }
+}
+
+fn valid_path(path: &str) -> bool {
+    !path.is_empty() && path.split('/').all(|part| {
+        !part.is_empty() && part.len() < RAMFS_MAX_NAME && part != "." && part != ".."
+    })
+}
+
+fn parent_path(path: &str) -> &str {
+    path.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("")
+}
+
+fn base_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
@@ -93,6 +140,7 @@ static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
 pub fn ramfs_init() {
     let mut fs = RAMFS.lock();
     fs.files.clear();
+    fs.directories.clear();
 
     fs.create(
         "motd",
@@ -119,6 +167,10 @@ pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
     RAMFS.lock().create(name, initial_data)
 }
 
+pub fn ramfs_create_dir(name: &str) -> bool {
+    RAMFS.lock().create_dir(name)
+}
+
 pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
     RAMFS.lock().read(name)
 }
@@ -135,9 +187,14 @@ pub fn ramfs_count() -> usize {
     RAMFS.lock().count()
 }
 
-pub fn ramfs_list<F: FnMut(&str, usize)>(mut cb: F) {
-    let fs = RAMFS.lock();
-    for node in &fs.files {
-        cb(&node.name, node.data.len());
-    }
+pub fn ramfs_is_dir(path: &str) -> bool {
+    RAMFS.lock().dir_exists(path)
+}
+
+pub fn ramfs_count_in(path: &str) -> usize {
+    RAMFS.lock().count_in(path)
+}
+
+pub fn ramfs_list<F: FnMut(&str, usize, bool)>(path: &str, cb: F) {
+    RAMFS.lock().list(path, cb);
 }
