@@ -13,11 +13,7 @@ pub fn show_rgb332(pixels: &[u8], width: usize, height: usize) -> bool {
     }
 
     let mut framebuffer = Framebuffer::new();
-    for (y, row) in pixels.chunks_exact(width).enumerate() {
-        for (x, &color) in row.iter().enumerate() {
-            framebuffer.pixel(x, y, color);
-        }
-    }
+    let _ = framebuffer.blit_rgb332(pixels);
 
     keyboard_wait_for_keypress();
     framebuffer.leave();
