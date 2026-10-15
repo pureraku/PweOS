@@ -1,28 +1,26 @@
 use crate::drivers::keyboard::keyboard_wait_for_keypress;
-use crate::drivers::vga::{vga_clear, vga_enter_rgb332_mode, vga_restore_text_mode};
-use core::ptr::write_volatile;
+use crate::drivers::framebuffer::{Framebuffer, HEIGHT as FRAMEBUFFER_HEIGHT, WIDTH as FRAMEBUFFER_WIDTH};
+use crate::drivers::vga::vga_clear;
 
-const IMAGE_WIDTH: usize = 320;
-const IMAGE_HEIGHT: usize = 200;
-const VGA_FRAMEBUFFER: usize = 0xA0000;
-
-/// Draw a raw RGB332 image using the VGA's 320x200, 256-color mode.
+/// Draw a raw RGB332 image through the shared VGA framebuffer API.
 /// Returns false if the image doesn't match the supported dimensions.
 pub fn show_rgb332(pixels: &[u8], width: usize, height: usize) -> bool {
-    if width != IMAGE_WIDTH || height != IMAGE_HEIGHT || pixels.len() != width * height {
+    if width != FRAMEBUFFER_WIDTH
+        || height != FRAMEBUFFER_HEIGHT
+        || pixels.len() != width * height
+    {
         return false;
     }
 
-    vga_enter_rgb332_mode();
-    unsafe {
-        let framebuffer = VGA_FRAMEBUFFER as *mut u8;
-        for (offset, &pixel) in pixels.iter().enumerate() {
-            write_volatile(framebuffer.add(offset), pixel);
+    let mut framebuffer = Framebuffer::new();
+    for (y, row) in pixels.chunks_exact(width).enumerate() {
+        for (x, &color) in row.iter().enumerate() {
+            framebuffer.pixel(x, y, color);
         }
     }
 
     keyboard_wait_for_keypress();
-    vga_restore_text_mode();
+    framebuffer.leave();
     vga_clear();
     true
 }

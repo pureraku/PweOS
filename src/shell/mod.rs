@@ -5,7 +5,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use crate::arch::cpu::cpu_get_info;
 use crate::arch::io::{inb, outb, outw};
-use crate::drivers::keyboard::{keyboard_getchar, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
+use crate::drivers::keyboard::{keyboard_getchar, keyboard_has_char, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
+use crate::drivers::framebuffer::{rgb332, Framebuffer};
 use crate::drivers::rtc::rtc_get_datetime;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
 use crate::drivers::vga::{
@@ -196,6 +197,11 @@ static COMMANDS: &[Command] = &[
         handler: cmd_image,
     },
     Command {
+        name: "cube",
+        desc: "Show a spinning wireframe cube",
+        handler: cmd_cube,
+    },
+    Command {
         name: "grep",
         desc: "Search piped input or files: grep <text> [path...]",
         handler: cmd_grep,
@@ -288,7 +294,7 @@ fn cmd_help(_args: &[&str]) {
     println!("\nImage examples:");
     println!("  image /images/cat.rgb332");
     println!("  image /images/billi.rgb332");
-    println!("  Press Escape to return to the shell.");
+    println!("  cube (press a key to return to the shell)");
     println!("-----------------------:3----------------------------");
 }
 
@@ -310,6 +316,71 @@ fn cmd_image(args: &[&str]) {
         }
         None => println!("image: '{}' not found", args[1]),
     }
+}
+
+fn cmd_cube(_args: &[&str]) {
+    println!("Spinning cube; press any key to return to the shell.");
+    let mut framebuffer = Framebuffer::new();
+    const SIN: [i32; 16] = [
+        0, 392, 724, 946, 1024, 946, 724, 392,
+        0, -392, -724, -946, -1024, -946, -724, -392,
+    ];
+    const VERTICES: [(i32, i32, i32); 8] = [
+        (-42, -42, -42), (42, -42, -42), (42, 42, -42), (-42, 42, -42),
+        (-42, -42, 42), (42, -42, 42), (42, 42, 42), (-42, 42, 42),
+    ];
+    const EDGES: [(usize, usize); 12] = [
+        (0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    ];
+
+    let mut phase = 0u16;
+    while !keyboard_has_char() {
+        // Interpolate the small lookup table so rotation changes every frame
+        // without making the overall spin faster.
+        let sin_y = smooth_sine(&SIN, phase);
+        let cos_y = smooth_sine(&SIN, phase.wrapping_add(256) & 1023);
+        let x_phase = phase.wrapping_mul(3).wrapping_add(128) & 1023;
+        let sin_x = smooth_sine(&SIN, x_phase);
+        let cos_x = smooth_sine(&SIN, x_phase.wrapping_add(256) & 1023);
+        let mut projected = [(0i32, 0i32); 8];
+
+        for (index, &(x, y, z)) in VERTICES.iter().enumerate() {
+            let rotated_x = (x * cos_y + z * sin_y) / 1024;
+            let rotated_z = (-x * sin_y + z * cos_y) / 1024;
+            let rotated_y = (y * cos_x - rotated_z * sin_x) / 1024;
+            let depth = (y * sin_x + rotated_z * cos_x) / 1024 + 150;
+            let depth = depth.max(30);
+            projected[index] = (
+                160 + rotated_x * 125 / depth,
+                100 + rotated_y * 125 / depth,
+            );
+        }
+
+        framebuffer.clear(rgb332(8, 12, 24));
+        for (index, &(from, to)) in EDGES.iter().enumerate() {
+            let color = match index % 3 {
+                0 => rgb332(60, 220, 255),
+                1 => rgb332(255, 180, 48),
+                _ => rgb332(220, 80, 255),
+            };
+            framebuffer.line(projected[from], projected[to], color);
+        }
+
+        phase = phase.wrapping_add(5) & 1023;
+        timer_sleep(2);
+    }
+    let _ = keyboard_getchar();
+    framebuffer.leave();
+    vga_clear();
+}
+
+fn smooth_sine(table: &[i32; 16], phase: u16) -> i32 {
+    let index = (phase >> 6) as usize;
+    let fraction = (phase & 63) as i32;
+    let current = table[index];
+    let next = table[(index + 1) & 15];
+    current + (next - current) * fraction / 64
 }
 
 fn cmd_echo(args: &[&str]) {
