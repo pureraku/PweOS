@@ -166,6 +166,8 @@ fn base_name(path: &str) -> &str {
 
 static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
 
+include!(concat!(env!("OUT_DIR"), "/bundled_images.rs"));
+
 pub fn ramfs_init() {
     let mut fs = RAMFS.lock();
     fs.files.clear();
@@ -192,8 +194,11 @@ pub fn ramfs_init() {
             );
 
     fs.create_dir("images");
-    fs.create("images/cat.rgb332", include_bytes!("../../assets/cat.rgb332"));
-    fs.create("images/billi.rgb332", include_bytes!("../../assets/billi.rgb332"));
+    for &(name, data) in BUNDLED_IMAGES {
+        let mut path = String::from("images/");
+        path.push_str(name);
+        fs.create(&path, data);
+    }
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
