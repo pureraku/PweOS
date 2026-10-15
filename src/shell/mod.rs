@@ -177,8 +177,13 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "write",
-        desc: "Write to file: write <filename> <text>",
+        desc: "Write one line to a file: write <filename> <text>",
         handler: cmd_write,
+    },
+    Command {
+        name: "edit",
+        desc: "Edit a multiline file: edit <path> (Escape saves)",
+        handler: cmd_edit,
     },
     Command {
         name: "rm",
@@ -424,6 +429,71 @@ fn cmd_write(args: &[&str]) {
         println!("Wrote {} bytes to '{}'. :3", len, path);
     } else {
         println!("Failed to write to '{}'. :(", args[1]);
+    }
+}
+
+fn editor_redraw(path: &str, contents: &[u8]) {
+    vga_clear();
+    vga_set_color(VgaColor::LightCyan, VgaColor::Black);
+    println!("PweOS editor — {}", path);
+    vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+    println!("Type to insert, Enter for a new line, Backspace to erase.");
+    println!("Press Escape to save and return to the shell.");
+    println!("----------------------------------------------------");
+    for &byte in contents {
+        if byte == b'\n' || byte == b'\r' || byte == b'\t' || (32..=126).contains(&byte) {
+            vga_putchar(byte);
+        } else {
+            vga_putchar(b'.');
+        }
+    }
+}
+
+fn cmd_edit(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: edit <path>");
+        return;
+    }
+
+    const EDITOR_MAX_BYTES: usize = 4096;
+    let path = resolve_path(args[1]);
+    let mut contents = match ramfs_read(&path) {
+        Some(data) => data,
+        None => {
+            if !ramfs_create(&path, b"") {
+                println!("edit: could not create '{}' (check the parent directory).", path);
+                return;
+            }
+            Vec::new()
+        }
+    };
+    if contents.len() > EDITOR_MAX_BYTES {
+        println!("edit: '{}' exceeds the {} byte editor limit.", path, EDITOR_MAX_BYTES);
+        return;
+    }
+
+    editor_redraw(&path, &contents);
+    loop {
+        let key = keyboard_getchar();
+        if key == 27 {
+            let saved = ramfs_write(&path, &contents, false);
+            vga_set_color(VgaColor::LightGreen, VgaColor::Black);
+            println!("\n{} {} bytes to '{}'.", if saved { "Saved" } else { "Could not save" }, contents.len(), path);
+            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+            return;
+        } else if key == b'\x08' {
+            if contents.pop().is_some() {
+                editor_redraw(&path, &contents);
+            }
+        } else if key == b'\n' || key == b'\r' {
+            if contents.len() < EDITOR_MAX_BYTES {
+                contents.push(b'\n');
+                vga_putchar(b'\n');
+            }
+        } else if (32..=126).contains(&key) && contents.len() < EDITOR_MAX_BYTES {
+            contents.push(key);
+            vga_putchar(key);
+        }
     }
 }
 

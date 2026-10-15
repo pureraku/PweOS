@@ -39,7 +39,8 @@ PweOS Builtin Commands:
   pwd        - Print the current working directory
   cat        - Display file contents: cat <filename>
   touch      - Create empty file: touch <filename>
-  write      - Write to file: write <filename> <text>
+  write      - Write one line: write <filename> <text>
+  edit       - Edit multiline files: edit <path> (Escape saves)
   rm         - Delete file: rm <filename>
   calc       - Evaluate arithmetic expression: a op b
   color      - Set terminal color: color <fg> [bg]
@@ -154,7 +155,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
-| `write` | `write <filename> <text>` | Writes or appends text to a file |
+| `write` | `write <filename> <text>` | Replaces a file with one line of text |
+| `edit` | `edit <path>` | Opens a multiline editor; Enter inserts a newline, Backspace erases, and Escape saves |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |
 | `color` | `color <fg> [bg]` | Changes console foreground and optional background color |
