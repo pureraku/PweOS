@@ -116,7 +116,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
-- The `image <path>` shell command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. For example, use `image /images/cat.rgb332` or `image /images/billi.rgb332`. Press Escape to restore the saved text screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
+- The `image <path>` command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. Paths can be absolute or relative to the current directory. Press Escape to restore text mode and clear the shell screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
 - Supports 16 foreground and 16 background colors.
 - Handles `\n`, `\r`, `\t`, backspace (`\b`), and screen scrolling.
 - Updates the hardware blinking text cursor via CRT controller I/O ports `0x3D4` and `0x3D5`.
@@ -162,7 +162,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
-| `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; bundled images are in `/images/` |
+| `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
