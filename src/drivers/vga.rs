@@ -4,6 +4,18 @@ use crate::arch::io::{inb, outb};
 use crate::sync::Spinlock;
 use core::fmt;
 
+struct VgaSnapshot {
+    misc: u8,
+    sequencer: [u8; 5],
+    crtc: [u8; 25],
+    graphics: [u8; 9],
+    attributes: [u8; 21],
+    dac_mask: u8,
+    dac: [u8; 768],
+}
+
+static VGA_TEXT_SNAPSHOT: Spinlock<Option<VgaSnapshot>> = Spinlock::new(None);
+
 pub const VGA_WIDTH: usize = 80;
 pub const VGA_HEIGHT: usize = 25;
 pub const VGA_BUFFER_ADDR: usize = 0xB8000;
@@ -322,6 +334,137 @@ pub fn vga_restore_attribute_mode(mode: u8) {
         outb(0x3C0, 0x30 | 0x10);
         outb(0x3C0, mode);
     }
+}
+
+/// Switch to 320x200 packed-pixel VGA mode and program its DAC as RGB332.
+pub fn vga_enter_rgb332_mode() {
+    let mut saved = VGA_TEXT_SNAPSHOT.lock();
+    if saved.is_none() {
+        *saved = Some(unsafe { vga_capture_state() });
+    }
+    unsafe { vga_program_mode_13() };
+}
+
+/// Restore the exact VGA register and palette state saved before image display.
+pub fn vga_restore_text_mode() {
+    let snapshot = VGA_TEXT_SNAPSHOT.lock().take();
+    if let Some(snapshot) = snapshot {
+        unsafe { vga_restore_state(&snapshot) };
+    }
+}
+
+unsafe fn vga_capture_state() -> VgaSnapshot {
+    let misc = unsafe { inb(0x3CC) };
+    let mut sequencer = [0; 5];
+    let mut crtc = [0; 25];
+    let mut graphics = [0; 9];
+    let mut attributes = [0; 21];
+    let dac_mask = unsafe { inb(0x3C6) };
+    let mut dac = [0; 768];
+
+    for (index, value) in sequencer.iter_mut().enumerate() {
+        unsafe { outb(0x3C4, index as u8) };
+        *value = unsafe { inb(0x3C5) };
+    }
+    for (index, value) in crtc.iter_mut().enumerate() {
+        unsafe { outb(0x3D4, index as u8) };
+        *value = unsafe { inb(0x3D5) };
+    }
+    for (index, value) in graphics.iter_mut().enumerate() {
+        unsafe { outb(0x3CE, index as u8) };
+        *value = unsafe { inb(0x3CF) };
+    }
+    for (index, value) in attributes.iter_mut().enumerate() {
+        let _ = unsafe { inb(0x3DA) };
+        unsafe { outb(0x3C0, index as u8) };
+        *value = unsafe { inb(0x3C1) };
+    }
+    unsafe { outb(0x3C7, 0) };
+    for value in &mut dac {
+        *value = unsafe { inb(0x3C9) };
+    }
+
+    VgaSnapshot { misc, sequencer, crtc, graphics, attributes, dac_mask, dac }
+}
+
+unsafe fn vga_program_mode_13() {
+    const SEQUENCER: [u8; 5] = [0x03, 0x01, 0x0F, 0x00, 0x0E];
+    const CRTC: [u8; 25] = [
+        0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0x00, 0x41, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3, 0xFF,
+    ];
+    const GRAPHICS: [u8; 9] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF];
+    const ATTRIBUTES: [u8; 21] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+        0x0D, 0x0E, 0x0F, 0x41, 0x00, 0x0F, 0x00, 0x00,
+    ];
+
+    unsafe { outb(0x3C2, 0x63) };
+    unsafe { outb(0x3C4, 0); outb(0x3C5, 0x01) };
+    for (index, value) in SEQUENCER.iter().enumerate().skip(1) {
+        unsafe { outb(0x3C4, index as u8); outb(0x3C5, *value) };
+    }
+    unsafe { outb(0x3C4, 0); outb(0x3C5, 0x03) };
+
+    unsafe { outb(0x3D4, 0x11) };
+    let crtc_11 = unsafe { inb(0x3D5) } & 0x7F;
+    unsafe { outb(0x3D4, 0x11); outb(0x3D5, crtc_11) };
+    for (index, value) in CRTC.iter().enumerate() {
+        unsafe { outb(0x3D4, index as u8); outb(0x3D5, *value) };
+    }
+    for (index, value) in GRAPHICS.iter().enumerate() {
+        unsafe { outb(0x3CE, index as u8); outb(0x3CF, *value) };
+    }
+    for (index, value) in ATTRIBUTES.iter().enumerate() {
+        let _ = unsafe { inb(0x3DA) };
+        unsafe { outb(0x3C0, index as u8); outb(0x3C0, *value) };
+    }
+    let _ = unsafe { inb(0x3DA) };
+    unsafe { outb(0x3C0, 0x20) };
+
+    unsafe { outb(0x3C6, 0xFF) };
+    unsafe { outb(0x3C8, 0) };
+    for index in 0..256u16 {
+        let red = ((index >> 5) & 0x07) as u16;
+        let green = ((index >> 2) & 0x07) as u16;
+        let blue = (index & 0x03) as u16;
+        unsafe {
+            outb(0x3C9, ((red * 63 + 3) / 7) as u8);
+            outb(0x3C9, ((green * 63 + 3) / 7) as u8);
+            outb(0x3C9, ((blue * 63 + 1) / 3) as u8);
+        }
+    }
+}
+
+unsafe fn vga_restore_state(state: &VgaSnapshot) {
+    unsafe { outb(0x3C2, state.misc) };
+    unsafe { outb(0x3C4, 0); outb(0x3C5, 0x01) };
+    for (index, value) in state.sequencer.iter().enumerate().skip(1) {
+        unsafe { outb(0x3C4, index as u8); outb(0x3C5, *value) };
+    }
+    unsafe { outb(0x3C4, 0); outb(0x3C5, state.sequencer[0]) };
+
+    unsafe { outb(0x3D4, 0x11) };
+    let crtc_11 = unsafe { inb(0x3D5) } & 0x7F;
+    unsafe { outb(0x3D4, 0x11); outb(0x3D5, crtc_11) };
+    for (index, value) in state.crtc.iter().enumerate() {
+        unsafe { outb(0x3D4, index as u8); outb(0x3D5, *value) };
+    }
+    for (index, value) in state.graphics.iter().enumerate() {
+        unsafe { outb(0x3CE, index as u8); outb(0x3CF, *value) };
+    }
+    for (index, value) in state.attributes.iter().enumerate() {
+        let _ = unsafe { inb(0x3DA) };
+        unsafe { outb(0x3C0, index as u8); outb(0x3C0, *value) };
+    }
+    let _ = unsafe { inb(0x3DA) };
+    unsafe { outb(0x3C0, 0x20) };
+
+    unsafe { outb(0x3C8, 0) };
+    for &value in &state.dac {
+        unsafe { outb(0x3C9, value) };
+    }
+    unsafe { outb(0x3C6, state.dac_mask) };
 }
 
 pub fn vga_putchar(c: u8) {
