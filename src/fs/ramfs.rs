@@ -190,6 +190,10 @@ pub fn ramfs_init() {
      > ^ <  
             "#
             );
+
+    fs.create_dir("images");
+    fs.create("images/cat.rgb332", include_bytes!("../../assets/cat.rgb332"));
+    fs.create("images/billi.rgb332", include_bytes!("../../assets/billi.rgb332"));
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
