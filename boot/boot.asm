@@ -8,7 +8,7 @@ ORG 0x7C00
 
 KERNEL_LOAD_SEG  equ 0x1000      ; Physical address 0x10000
 KERNEL_LOAD_OFF  equ 0x0000
-KERNEL_SECTORS   equ 256         ; Read up to 256 sectors (128 KB)
+KERNEL_SECTORS   equ 512         ; Read up to 512 sectors (256 KB)
 
 start:
     ; Set up segment registers and stack in real mode
