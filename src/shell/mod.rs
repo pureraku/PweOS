@@ -191,9 +191,9 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cat,
     },
     Command {
-        name: "meow",
-        desc: "Display the cat picture; press Escape to return",
-        handler: cmd_meow,
+        name: "image",
+        desc: "Display an RGB332 image: image <path>",
+        handler: cmd_image,
     },
     Command {
         name: "grep",
@@ -287,9 +287,20 @@ fn cmd_clear(_args: &[&str]) {
     vga_clear();
 }
 
-fn cmd_meow(_args: &[&str]) {
-    println!("Meow! Press Escape to return to the shell.");
-    image::show_cat();
+fn cmd_image(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: image <path> (try: image /images/cat.rgb332)");
+        return;
+    }
+    let path = resolve_path(args[1]);
+    match ramfs_read(&path) {
+        Some(data) => {
+            if !image::show_rgb332(&data, 320, 200) {
+                println!("image: '{}' is not a 320x200 RGB332 image", args[1]);
+            }
+        }
+        None => println!("image: '{}' not found", args[1]),
+    }
 }
 
 fn cmd_echo(args: &[&str]) {

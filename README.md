@@ -10,7 +10,7 @@ PweOS is a minimal, educational 32-bit x86 operating system featuring a custom B
 [+] CPU: Intel 80386+ in 32-bit Protected Mode (IF=1 interrupts active)
 [+] Memory: Flat model active (base: 0x0, limit: 4GB)
 [+] Heap: Dynamic allocator initialized at 0x100000 (size: 2048 KB)
-[+] RAMFS: In-memory filesystem initialized (3 default files mounted)
+[+] RAMFS: In-memory filesystem initialized (6 default files mounted)
 [+] IDT: 256 descriptor gates loaded, PIC remapped to vectors 0x20..0x2F
 [+] PIT: Timer running at 100 Hz (IRQ0 active)
 [+] Keyboard: PS/2 controller driver online (IRQ1 active)
@@ -93,7 +93,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 
 ### 1. Bootloader (`boot/boot.asm`)
 - **Stage 1 MBR Boot Sector (512 bytes)** executed by BIOS at `0x7C00`.
-- Performs **LBA to CHS conversion** to load kernel sectors into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector to support kernels larger than 64 KB.
+- Performs **LBA to CHS conversion** to load up to 256 KB of kernel data into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector.
 - Enables the **A20 Address Line** via Fast A20 gate.
 - Loads a 32-bit **Global Descriptor Table (GDT)** defining flat 4GB code and data segments.
 - Transitions the processor from 16-bit Real Mode to **32-bit Protected Mode** (`CR0.PE = 1`) and jumps to kernel entry.
@@ -112,11 +112,11 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 ### 4. RAMFS Virtual Filesystem (`src/fs/ramfs.rs`)
 - Dynamic in-memory virtual filesystem backed by the heap.
 - Supports file creation, resizing, reading, appending, and deletion.
-- Prepopulated with default virtual files: `motd`, `os-release`, and `readme.txt`.
+- Prepopulated with default text files and an `/images/` directory containing `cat.rgb332` and `billi.rgb332` (320x200 raw RGB332 pixels each).
 
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
-- The `meow` shell command displays the bundled cat as a 16-color, 80x50 half-block image without switching video modes; press Escape to clear it and return. Image rendering lives in `src/shell/image.rs`; the VGA driver provides generic colored-cell and text-mode controls.
+- The `image <path>` shell command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. For example, use `image /images/cat.rgb332` or `image /images/billi.rgb332`. Press Escape to restore the saved text screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
 - Supports 16 foreground and 16 background colors.
 - Handles `\n`, `\r`, `\t`, backspace (`\b`), and screen scrolling.
 - Updates the hardware blinking text cursor via CRT controller I/O ports `0x3D4` and `0x3D5`.
@@ -161,7 +161,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
-| `meow` | `meow` | Displays the bundled cat picture; press Escape to return to the shell |
+| `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; bundled images are in `/images/` |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
