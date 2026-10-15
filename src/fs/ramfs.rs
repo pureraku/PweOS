@@ -63,6 +63,18 @@ impl Ramfs {
         true
     }
 
+    pub fn delete_dir(&mut self, path: &str) -> bool {
+        if path.is_empty() || self.count_in(path) != 0 {
+            return false;
+        }
+        if let Some(pos) = self.directories.iter().position(|dir| dir == path) {
+            self.directories.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn dir_exists(&self, path: &str) -> bool {
         path.is_empty() || self.directories.iter().any(|dir| dir == path)
     }
@@ -169,6 +181,10 @@ pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
 
 pub fn ramfs_create_dir(name: &str) -> bool {
     RAMFS.lock().create_dir(name)
+}
+
+pub fn ramfs_delete_dir(path: &str) -> bool {
+    RAMFS.lock().delete_dir(path)
 }
 
 pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
