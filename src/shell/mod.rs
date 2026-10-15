@@ -9,7 +9,8 @@ use crate::drivers::rtc::rtc_get_datetime;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
 use crate::drivers::vga::{vga_clear, vga_putchar, vga_set_color, VgaColor};
 use crate::fs::ramfs::{
-    ramfs_count, ramfs_create, ramfs_delete, ramfs_list, ramfs_read, ramfs_write,
+    ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_is_dir, ramfs_list,
+    ramfs_read, ramfs_write,
 };
 use crate::mm::heap::heap_get_stats;
 
@@ -54,6 +55,38 @@ impl ShellHistory {
 use crate::sync::Spinlock;
 
 static HISTORY: Spinlock<ShellHistory> = Spinlock::new(ShellHistory::new());
+static WORKING_DIRECTORY: Spinlock<String> = Spinlock::new(String::new());
+
+fn resolve_path(path: &str) -> String {
+    let mut resolved = if path.starts_with('/') {
+        String::new()
+    } else {
+        WORKING_DIRECTORY.lock().clone()
+    };
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if let Some(pos) = resolved.rfind('/') {
+                    resolved.truncate(pos);
+                } else {
+                    resolved.clear();
+                }
+            }
+            name => {
+                if !resolved.is_empty() {
+                    resolved.push('/');
+                }
+                resolved.push_str(name);
+            }
+        }
+    }
+    resolved
+}
+
+fn current_directory() -> String {
+    WORKING_DIRECTORY.lock().clone()
+}
 
 struct Command {
     name: &'static str,
@@ -114,8 +147,23 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "ls",
-        desc: "List files in in-memory RAM filesystem",
+        desc: "List files and directories in the RAM filesystem",
         handler: cmd_ls,
+    },
+    Command {
+        name: "mkdir",
+        desc: "Create a directory: mkdir <name>",
+        handler: cmd_mkdir,
+    },
+    Command {
+        name: "cd",
+        desc: "Change directory: cd <path>",
+        handler: cmd_cd,
+    },
+    Command {
+        name: "pwd",
+        desc: "Print the current working directory",
+        handler: cmd_pwd,
     },
     Command {
         name: "cat",
@@ -261,16 +309,55 @@ fn cmd_cpuinfo(_args: &[&str]) {
     println!("----------------------------------------------------");
 }
 
-fn cmd_ls(_args: &[&str]) {
-    println!("\nRAMFS Files ({} total):", ramfs_count());
-    println!("dang so many files..");
-    ramfs_list(|name, size| {
+fn cmd_ls(args: &[&str]) {
+    let path = if args.len() > 1 { resolve_path(args[1]) } else { current_directory() };
+    if !ramfs_is_dir(&path) {
+        println!("ls: '{}' is not a directory.", args.get(1).unwrap_or(&"."));
+        return;
+    }
+    println!("\n{} ({} items):", if path.is_empty() { "/" } else { path.as_str() }, ramfs_count_in(&path));
+    ramfs_list(&path, |name, size, is_directory| {
         vga_set_color(VgaColor::LightCyan, VgaColor::Black);
-        print!("  {:<16}", name);
+        if is_directory {
+            print!("  {:<16}", alloc::format!("{}/", name));
+        } else {
+            print!("  {:<16}", name);
+        }
         vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-        println!(" {} bytes", size);
+        if is_directory {
+            println!(" <DIR>");
+        } else {
+            println!(" {} bytes", size);
+        }
     });
     println!("----------------------------------------------------");
+}
+
+fn cmd_mkdir(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: mkdir <name>");
+        return;
+    }
+    let path = resolve_path(args[1]);
+    if ramfs_create_dir(&path) {
+        println!("Created directory '{}/'.", path);
+    } else {
+        println!("Directory '{}' is invalid or already exists.", args[1]);
+    }
+}
+
+fn cmd_cd(args: &[&str]) {
+    let target = if args.len() < 2 { String::new() } else { resolve_path(args[1]) };
+    if ramfs_is_dir(&target) {
+        *WORKING_DIRECTORY.lock() = target;
+    } else {
+        println!("cd: '{}' is not a directory.", args.get(1).unwrap_or(&""));
+    }
+}
+
+fn cmd_pwd(_args: &[&str]) {
+    let path = current_directory();
+    println!("/{}", path);
 }
 
 fn cmd_cat(args: &[&str]) {
@@ -278,7 +365,8 @@ fn cmd_cat(args: &[&str]) {
         println!("Usage: cat <filename>");
         return;
     }
-    match ramfs_read(args[1]) {
+    let path = resolve_path(args[1]);
+    match ramfs_read(&path) {
         Some(data) => {
             if let Ok(text) = core::str::from_utf8(&data) {
                 print!("{}", text);
@@ -307,8 +395,9 @@ fn cmd_touch(args: &[&str]) {
         println!("Usage: touch <filename>");
         return;
     }
-    if ramfs_create(args[1], b"") {
-        println!("Created file '{}'. :3", args[1]);
+    let path = resolve_path(args[1]);
+    if ramfs_create(&path, b"") {
+        println!("Created file '{}'. :3", path);
     } else {
         println!("File '{}' already exists or creation failed.", args[1]);
     }
@@ -330,8 +419,9 @@ fn cmd_write(args: &[&str]) {
     content.push('\n');
 
     let len = content.len();
-    if ramfs_write(args[1], content.as_bytes(), false) {
-        println!("Wrote {} bytes to '{}'. :3", len, args[1]);
+    let path = resolve_path(args[1]);
+    if ramfs_write(&path, content.as_bytes(), false) {
+        println!("Wrote {} bytes to '{}'. :3", len, path);
     } else {
         println!("Failed to write to '{}'. :(", args[1]);
     }
@@ -342,8 +432,9 @@ fn cmd_rm(args: &[&str]) {
         println!("Usage: rm <filename>");
         return;
     }
-    if ramfs_delete(args[1]) {
-        println!("Deleted file '{}'. :3", args[1]);
+    let path = resolve_path(args[1]);
+    if ramfs_delete(&path) {
+        println!("Deleted file '{}'. :3", path);
     } else {
         vga_set_color(VgaColor::LightRed, VgaColor::Black);
         println!("Error: File '{}' not found.", args[1]);
@@ -720,7 +811,12 @@ pub fn shell_run() -> ! {
         vga_set_color(VgaColor::LightCyan, VgaColor::Black);
         print!("pweos");
         vga_set_color(VgaColor::LightGreen, VgaColor::Black);
-        print!("> ");
+        let cwd = current_directory();
+        if cwd.is_empty() {
+            print!("> ");
+        } else {
+            print!(":/{}> ", cwd);
+        }
         vga_set_color(VgaColor::White, VgaColor::Black);
 
         let len = shell_readline(&mut line_buf);

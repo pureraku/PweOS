@@ -33,7 +33,10 @@ PweOS Builtin Commands:
   cpuinfo    - Display CPU hardware details via CPUID
   meminfo    - Display kernel heap memory statistics
   history    - Display command history buffer
-  ls         - List files in in-memory RAM filesystem
+  ls         - List files and directories in in-memory RAM filesystem
+  mkdir      - Create a directory: mkdir <name>
+  cd         - Change directory: cd <path>
+  pwd        - Print the current working directory
   cat        - Display file contents: cat <filename>
   touch      - Create empty file: touch <filename>
   write      - Write to file: write <filename> <text>
@@ -145,7 +148,10 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cpuinfo` | `cpuinfo` | Queries CPUID to display vendor, brand string, and feature flags |
 | `meminfo` | `meminfo` | Displays total heap capacity, used bytes, free bytes, and blocks |
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
-| `ls` | `ls` | Lists files and file sizes in the in-memory RAM filesystem |
+| `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |
+| `mkdir` | `mkdir <path>` | Creates a directory under an existing parent directory |
+| `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
+| `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Writes or appends text to a file |
