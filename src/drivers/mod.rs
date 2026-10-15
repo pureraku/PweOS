@@ -1,4 +1,5 @@
 pub mod keyboard;
+pub mod ata;
 pub mod framebuffer;
 pub mod rtc;
 pub mod serial;

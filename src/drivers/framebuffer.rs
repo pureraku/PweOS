@@ -30,6 +30,17 @@ impl Framebuffer {
         }
     }
 
+    /// Copy a complete packed RGB332 frame into the framebuffer.
+    pub fn blit_rgb332(&mut self, pixels: &[u8]) -> bool {
+        if pixels.len() != WIDTH * HEIGHT {
+            return false;
+        }
+        for (offset, &color) in pixels.iter().enumerate() {
+            unsafe { write_volatile((VGA_MEMORY as *mut u8).add(offset), color) };
+        }
+        true
+    }
+
     pub fn pixel(&mut self, x: usize, y: usize, color: u8) {
         if x < WIDTH && y < HEIGHT {
             unsafe { write_volatile((VGA_MEMORY as *mut u8).add(y * WIDTH + x), color) };
