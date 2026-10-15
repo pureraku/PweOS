@@ -116,6 +116,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
+- The `meow` shell command displays the bundled cat as a 16-color, 80x50 half-block image without switching video modes; press Escape to clear it and return. Image rendering lives in `src/shell/image.rs`; the VGA driver provides generic colored-cell and text-mode controls.
 - Supports 16 foreground and 16 background colors.
 - Handles `\n`, `\r`, `\t`, backspace (`\b`), and screen scrolling.
 - Updates the hardware blinking text cursor via CRT controller I/O ports `0x3D4` and `0x3D5`.
@@ -160,6 +161,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
+| `meow` | `meow` | Displays the bundled cat picture; press Escape to return to the shell |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |

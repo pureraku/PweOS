@@ -1,4 +1,5 @@
 extern crate alloc;
+mod image;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -190,6 +191,11 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cat,
     },
     Command {
+        name: "meow",
+        desc: "Display the cat picture; press Escape to return",
+        handler: cmd_meow,
+    },
+    Command {
         name: "grep",
         desc: "Search piped input or files: grep <text> [path...]",
         handler: cmd_grep,
@@ -279,6 +285,11 @@ fn cmd_help(_args: &[&str]) {
 
 fn cmd_clear(_args: &[&str]) {
     vga_clear();
+}
+
+fn cmd_meow(_args: &[&str]) {
+    println!("Meow! Press Escape to return to the shell.");
+    image::show_cat();
 }
 
 fn cmd_echo(args: &[&str]) {
