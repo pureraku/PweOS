@@ -93,7 +93,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 
 ### 1. Bootloader (`boot/boot.asm`)
 - **Stage 1 MBR Boot Sector (512 bytes)** executed by BIOS at `0x7C00`.
-- Performs **LBA to CHS conversion** to load up to 256 KB of kernel data into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector.
+- Performs **LBA to CHS conversion** to load up to 448 KB of kernel data into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector.
 - Enables the **A20 Address Line** via Fast A20 gate.
 - Loads a 32-bit **Global Descriptor Table (GDT)** defining flat 4GB code and data segments.
 - Transitions the processor from 16-bit Real Mode to **32-bit Protected Mode** (`CR0.PE = 1`) and jumps to kernel entry.
@@ -246,6 +246,16 @@ rustup component add rust-src --toolchain nightly
 ---
 
 ## Building and Running
+
+### Add an image
+
+Convert a JPEG or another Pillow-supported image to the PweOS RGB332 format:
+
+```bash
+uv run tools/image_to_rgb332.py path/to/photo.jpg
+```
+
+The converter writes `assets/photo.rgb332` at 320x200, preserving the source aspect ratio with black padding where needed. Use `--output assets/custom-name.rgb332` to choose another bundled name. Every `.rgb332` file directly inside `assets/` is bundled into RAMFS automatically on the next build and appears under `/images/`; view it with `image /images/photo.rgb332`. The first `uv run` may download Pillow.
 
 ### Build the OS image
 ```bash
