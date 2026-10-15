@@ -12,6 +12,7 @@ struct VgaSnapshot {
     attributes: [u8; 21],
     dac_mask: u8,
     dac: [u8; 768],
+    font: [u8; 8192],
 }
 
 static VGA_TEXT_SNAPSHOT: Spinlock<Option<VgaSnapshot>> = Spinlock::new(None);
@@ -384,7 +385,10 @@ unsafe fn vga_capture_state() -> VgaSnapshot {
         *value = unsafe { inb(0x3C9) };
     }
 
-    VgaSnapshot { misc, sequencer, crtc, graphics, attributes, dac_mask, dac }
+    let mut font = [0; 8192];
+    unsafe { vga_read_font_plane(&mut font, &sequencer, &graphics) };
+
+    VgaSnapshot { misc, sequencer, crtc, graphics, attributes, dac_mask, dac, font }
 }
 
 unsafe fn vga_program_mode_13() {
@@ -453,6 +457,7 @@ unsafe fn vga_restore_state(state: &VgaSnapshot) {
     for (index, value) in state.graphics.iter().enumerate() {
         unsafe { outb(0x3CE, index as u8); outb(0x3CF, *value) };
     }
+    unsafe { vga_write_font_plane(&state.font, &state.sequencer, &state.graphics) };
     for (index, value) in state.attributes.iter().enumerate() {
         let _ = unsafe { inb(0x3DA) };
         unsafe { outb(0x3C0, index as u8); outb(0x3C0, *value) };
@@ -465,6 +470,61 @@ unsafe fn vga_restore_state(state: &VgaSnapshot) {
         unsafe { outb(0x3C9, value) };
     }
     unsafe { outb(0x3C6, state.dac_mask) };
+}
+
+unsafe fn vga_read_font_plane(
+    font: &mut [u8; 8192],
+    sequencer: &[u8; 5],
+    graphics: &[u8; 9],
+) {
+    unsafe { vga_set_font_plane_access() };
+    let font_memory = 0xA0000 as *const u8;
+    unsafe {
+        for (offset, value) in font.iter_mut().enumerate() {
+            *value = core::ptr::read_volatile(font_memory.add(offset));
+        }
+    }
+    unsafe { vga_restore_font_access_registers(sequencer, graphics) };
+}
+
+unsafe fn vga_write_font_plane(
+    font: &[u8; 8192],
+    sequencer: &[u8; 5],
+    graphics: &[u8; 9],
+) {
+    unsafe { vga_set_font_plane_access() };
+    let font_memory = 0xA0000 as *mut u8;
+    unsafe {
+        for (offset, &value) in font.iter().enumerate() {
+            core::ptr::write_volatile(font_memory.add(offset), value);
+        }
+    }
+    unsafe { vga_restore_font_access_registers(sequencer, graphics) };
+}
+
+unsafe fn vga_set_font_plane_access() {
+    unsafe {
+        outb(0x3C4, 0x02);
+        outb(0x3C5, 0x04);
+        outb(0x3C4, 0x04);
+        outb(0x3C5, 0x07);
+        outb(0x3CE, 0x04);
+        outb(0x3CF, 0x02);
+        outb(0x3CE, 0x05);
+        outb(0x3CF, 0x00);
+        outb(0x3CE, 0x06);
+        outb(0x3CF, 0x04);
+    }
+}
+
+unsafe fn vga_restore_font_access_registers(sequencer: &[u8; 5], graphics: &[u8; 9]) {
+    for (index, value) in sequencer.iter().enumerate().skip(1) {
+        unsafe { outb(0x3C4, index as u8); outb(0x3C5, *value) };
+    }
+    unsafe { outb(0x3C4, 0); outb(0x3C5, sequencer[0]) };
+    for (index, value) in graphics.iter().enumerate() {
+        unsafe { outb(0x3CE, index as u8); outb(0x3CF, *value) };
+    }
 }
 
 pub fn vga_putchar(c: u8) {

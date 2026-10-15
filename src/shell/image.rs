@@ -1,5 +1,5 @@
 use crate::drivers::keyboard::keyboard_wait_for_keypress;
-use crate::drivers::vga::{vga_enter_rgb332_mode, vga_restore_text_mode};
+use crate::drivers::vga::{vga_clear, vga_enter_rgb332_mode, vga_restore_text_mode};
 use core::ptr::write_volatile;
 
 const IMAGE_WIDTH: usize = 320;
@@ -23,5 +23,6 @@ pub fn show_rgb332(pixels: &[u8], width: usize, height: usize) -> bool {
 
     keyboard_wait_for_keypress();
     vga_restore_text_mode();
+    vga_clear();
     true
 }
