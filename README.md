@@ -40,7 +40,7 @@ PweOS Builtin Commands:
   cd         - Change directory: cd <path>
   pwd        - Print the current working directory
   cat        - Display file contents: cat <filename>
-  grep       - Filter piped lines: grep <text>
+  grep       - Search files or piped lines: grep <text> [path...]
   touch      - Create empty file: touch <filename>
   write      - Write one line: write <filename> <text>
   edit       - Edit multiline files: edit <path> (Escape saves)
@@ -160,7 +160,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
-| `grep` | `grep <text>` | Prints lines from piped input that contain the text |
+| `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
 | `edit` | `edit [path]` | Opens a multiline editor; accepts piped text, and prompts for a save path when none was given |

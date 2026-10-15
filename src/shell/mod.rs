@@ -191,7 +191,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "grep",
-        desc: "Print input lines containing text: grep <text>",
+        desc: "Search piped input or files: grep <text> [path...]",
         handler: cmd_grep,
     },
     Command {
@@ -476,17 +476,39 @@ fn cmd_cat(args: &[&str]) {
 }
 
 fn cmd_grep(args: &[&str]) {
-    if args.len() < 2 || !*PIPE_ACTIVE.lock() {
-        println!("Usage: grep <text> (reads from a pipe)");
+    if args.len() < 2 {
+        println!("Usage: grep <text> [path...]");
         return;
     }
-    let input = pipe_input();
     let needle = args[1].as_bytes();
+
+    if args.len() > 2 {
+        let multiple_files = args.len() > 3;
+        for &arg in args.iter().skip(2) {
+            let path = resolve_path(arg);
+            match ramfs_read(&path) {
+                Some(contents) => {
+                    grep_matching_lines(&contents, needle, if multiple_files { Some(path.as_str()) } else { None });
+                }
+                None => println!("grep: '{}' not found.", arg),
+            }
+        }
+    } else if *PIPE_ACTIVE.lock() {
+        grep_matching_lines(&pipe_input(), needle, None);
+    } else {
+        println!("Usage: grep <text> [path...] (or provide piped input)");
+    }
+}
+
+fn grep_matching_lines(input: &[u8], needle: &[u8], label: Option<&str>) {
     let mut line_start = 0;
     for index in 0..input.len() {
         if input[index] == b'\n' {
             let line = &input[line_start..=index];
             if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
+                if let Some(label) = label {
+                    print!("{}:", label);
+                }
                 for &byte in line {
                     vga_putchar(byte);
                 }
@@ -497,6 +519,9 @@ fn cmd_grep(args: &[&str]) {
     if line_start < input.len() {
         let line = &input[line_start..];
         if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
+            if let Some(label) = label {
+                print!("{}:", label);
+            }
             for &byte in line {
                 vga_putchar(byte);
             }
