@@ -40,7 +40,7 @@ $(ENTRY_OBJ): src/arch/entry.asm | $(BUILD)
 $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) assets/cat.rgb332 Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(KERNEL_LIB)

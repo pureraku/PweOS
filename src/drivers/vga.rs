@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use super::serial::{serial_init, serial_putchar};
-use crate::arch::io::outb;
+use crate::arch::io::{inb, outb};
 use crate::sync::Spinlock;
 use core::fmt;
 
@@ -97,6 +97,17 @@ impl VgaWriter {
         self.col = 0;
         self.row = 0;
         self.update_hardware_cursor();
+    }
+
+    /// Write one text cell without mirroring the character to the serial port.
+    pub fn write_cell(&mut self, col: usize, row: usize, character: u8, color: u8) {
+        if col < VGA_WIDTH && row < VGA_HEIGHT {
+            unsafe {
+                self.buffer
+                    .add(row * VGA_WIDTH + col)
+                    .write_volatile(vga_entry(character, color));
+            }
+        }
     }
 
     pub fn update_hardware_cursor(&self) {
@@ -250,6 +261,67 @@ pub fn vga_get_color() -> u8 {
 
 pub fn vga_set_raw_color(color: u8) {
     VGA_WRITER.lock().set_raw_color(color);
+}
+
+/// Set VGA text blink behavior and return the previous attribute mode value.
+pub fn vga_set_blink_enabled(enabled: bool) -> u8 {
+    let _ = unsafe { inb(0x3DA) };
+    unsafe { outb(0x3C0, 0x30 | 0x10) };
+    let previous = unsafe { inb(0x3C1) };
+    let _ = unsafe { inb(0x3DA) };
+    unsafe {
+        outb(0x3C0, 0x30 | 0x10);
+        outb(
+            0x3C0,
+            if enabled {
+                previous | 0x08
+            } else {
+                previous & !0x08
+            },
+        );
+    }
+    previous
+}
+
+/// Set the 16 logical text colors and return their previous DAC colors.
+pub fn vga_set_text_palette(colors: &[[u8; 3]; 16]) -> [[u8; 3]; 16] {
+    const DAC_INDEX: [u8; 16] = [0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63];
+    let mut previous = [[0u8; 3]; 16];
+    for (i, index) in DAC_INDEX.iter().enumerate() {
+        unsafe {
+            outb(0x3C7, *index);
+            previous[i] = [
+                inb(0x3C9) << 2,
+                inb(0x3C9) << 2,
+                inb(0x3C9) << 2,
+            ];
+            outb(0x3C8, *index);
+            outb(0x3C9, colors[i][0] >> 2);
+            outb(0x3C9, colors[i][1] >> 2);
+            outb(0x3C9, colors[i][2] >> 2);
+        }
+    }
+    previous
+}
+
+pub fn vga_restore_text_palette(colors: &[[u8; 3]; 16]) {
+    const DAC_INDEX: [u8; 16] = [0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63];
+    for (i, index) in DAC_INDEX.iter().enumerate() {
+        unsafe {
+            outb(0x3C8, *index);
+            outb(0x3C9, colors[i][0] >> 2);
+            outb(0x3C9, colors[i][1] >> 2);
+            outb(0x3C9, colors[i][2] >> 2);
+        }
+    }
+}
+
+pub fn vga_restore_attribute_mode(mode: u8) {
+    let _ = unsafe { inb(0x3DA) };
+    unsafe {
+        outb(0x3C0, 0x30 | 0x10);
+        outb(0x3C0, mode);
+    }
 }
 
 pub fn vga_putchar(c: u8) {

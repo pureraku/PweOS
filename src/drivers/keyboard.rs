@@ -2,7 +2,7 @@ use super::serial::{serial_getchar, serial_has_byte};
 use super::vga::vga_putchar;
 use crate::arch::io::inb;
 use crate::arch::isr::{isr_install_handler, Registers};
-use crate::arch::pic::pic_clear_mask;
+use crate::arch::pic::{pic_clear_mask, pic_set_mask};
 use crate::sync::Spinlock;
 
 pub const KEY_UP: u8 = 0x81;
@@ -248,6 +248,26 @@ pub fn keyboard_getchar() -> u8 {
             core::arch::asm!("hlt");
         }
     }
+}
+
+/// Wait for a physical keypress while reading PS/2 make codes directly.
+/// This is useful for full-screen views where translated shell input is paused.
+pub fn keyboard_wait_for_keypress() {
+    unsafe { pic_set_mask(1) };
+    loop {
+        if serial_has_byte() {
+            let _ = serial_getchar();
+            break;
+        }
+        if unsafe { inb(KEYBOARD_STATUS_PORT) } & 0x01 != 0 {
+            let scancode = unsafe { inb(KEYBOARD_DATA_PORT) };
+            if scancode & 0x80 == 0 {
+                break;
+            }
+        }
+        unsafe { core::arch::asm!("hlt") };
+    }
+    unsafe { pic_clear_mask(1) };
 }
 
 pub fn keyboard_readline(buffer: &mut [u8]) -> usize {
