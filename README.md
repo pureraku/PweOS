@@ -137,6 +137,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
+- **Tab Completion**: Complete command names and RAMFS file or directory paths. A unique match completes automatically; ambiguous matches extend to the shared prefix or show matching names.
 - Interactive command interpreter with line editing and 22 builtin commands.
 
 ---

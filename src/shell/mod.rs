@@ -1155,6 +1155,8 @@ fn shell_readline(buffer: &mut [u8]) -> usize {
                 index -= 1;
                 vga_putchar(b'\x08');
             }
+        } else if c == b'\t' {
+            index = shell_complete_line(buffer, index, max_len);
         } else if c == KEY_UP {
             if history_pos > 0 {
                 history_pos -= 1;
@@ -1202,6 +1204,166 @@ fn shell_readline(buffer: &mut [u8]) -> usize {
             vga_putchar(c);
         }
     }
+}
+
+fn shell_complete_line(buffer: &mut [u8], index: usize, max_len: usize) -> usize {
+    let line = core::str::from_utf8(&buffer[..index]).unwrap_or("");
+    let stage_start = line.rfind('|').map(|position| position + 1).unwrap_or(0);
+    let stage = String::from(line[stage_start..].trim_start());
+    let completing_command = !stage.chars().any(|character| character.is_whitespace());
+    let token_start = line[..index]
+        .rfind(|character: char| character.is_whitespace() || character == '|')
+        .map(|position| position + 1)
+        .unwrap_or(0);
+    let token = String::from(&line[token_start..]);
+
+    if completing_command {
+        let command_start = index.saturating_sub(stage.len());
+        let candidates: Vec<(String, bool)> = COMMANDS
+            .iter()
+            .filter(|command| command.name.starts_with(stage.as_str()))
+            .map(|command| (String::from(command.name), false))
+            .collect();
+        return finish_completion(
+            buffer,
+            index,
+            max_len,
+            command_start,
+            "",
+            &stage,
+            &candidates,
+            true,
+        );
+    }
+
+    let (directory, typed_directory, name_prefix) = if let Some(slash) = token.rfind('/') {
+        let parent = &token[..slash];
+        let directory = if parent.is_empty() && token.starts_with('/') {
+            String::new()
+        } else {
+            resolve_path(parent)
+        };
+        (
+            directory,
+            String::from(&token[..=slash]),
+            String::from(&token[slash + 1..]),
+        )
+    } else {
+        (current_directory(), String::new(), token)
+    };
+
+    let mut candidates = Vec::new();
+    ramfs_list(&directory, |name, _, is_directory| {
+        if name.starts_with(name_prefix.as_str()) {
+            candidates.push((String::from(name), is_directory));
+        }
+    });
+    finish_completion(
+        buffer,
+        index,
+        max_len,
+        token_start,
+        &typed_directory,
+        &name_prefix,
+        &candidates,
+        false,
+    )
+}
+
+fn finish_completion(
+    buffer: &mut [u8],
+    mut index: usize,
+    max_len: usize,
+    token_start: usize,
+    typed_directory: &str,
+    typed_prefix: &str,
+    candidates: &[(String, bool)],
+    completing_command: bool,
+) -> usize {
+    if candidates.is_empty() {
+        return index;
+    }
+
+    let common_prefix = common_candidate_prefix(candidates);
+    let mut replacement = String::from(typed_directory);
+    let should_list = candidates.len() > 1 && common_prefix.len() == typed_prefix.len();
+    if candidates.len() == 1 {
+        replacement.push_str(&candidates[0].0);
+        if candidates[0].1 {
+            replacement.push('/');
+        } else {
+            replacement.push(' ');
+        }
+    } else if common_prefix.len() > typed_prefix.len() {
+        replacement.push_str(common_prefix);
+    }
+
+    while index > token_start {
+        index -= 1;
+        vga_putchar(b'\x08');
+    }
+    for &byte in replacement.as_bytes().iter().take(max_len.saturating_sub(1 + index)) {
+        buffer[index] = byte;
+        index += 1;
+        vga_putchar(byte);
+    }
+
+    if should_list {
+        vga_putchar(b'\n');
+        for (position, (name, is_directory)) in candidates.iter().enumerate() {
+            if *is_directory {
+                vga_set_color(VgaColor::LightCyan, VgaColor::Black);
+            }
+            print!("{}{}", name, if *is_directory { "/" } else { "" });
+            vga_set_color(VgaColor::White, VgaColor::Black);
+            if position + 1 < candidates.len() {
+                print!("  ");
+            }
+        }
+        vga_putchar(b'\n');
+        shell_print_prompt();
+        for &byte in &buffer[..index] {
+            vga_putchar(byte);
+        }
+    }
+
+    if completing_command && candidates.len() > 1 && !should_list {
+        return index;
+    }
+    index
+}
+
+fn common_candidate_prefix(candidates: &[(String, bool)]) -> &str {
+    let Some((first, _)) = candidates.first() else {
+        return "";
+    };
+    let mut length = first.len();
+    for (candidate, _) in &candidates[1..] {
+        length = length.min(candidate.len());
+        while !first.is_char_boundary(length)
+            || !candidate.is_char_boundary(length)
+            || first.as_bytes()[..length] != candidate.as_bytes()[..length]
+        {
+            if length == 0 {
+                return "";
+            }
+            length -= 1;
+        }
+    }
+    &first[..length]
+}
+
+fn shell_print_prompt() {
+    vga_set_color(VgaColor::LightCyan, VgaColor::Black);
+    print!("pweos");
+    vga_set_color(VgaColor::LightGreen, VgaColor::Black);
+    let cwd = current_directory();
+    if cwd.is_empty() {
+        print!("> ");
+    } else {
+        print!(":/{}> ", cwd);
+    }
+    vga_set_color(VgaColor::White, VgaColor::Black);
 }
 
 fn execute_pipeline(line: &str) -> bool {
@@ -1255,17 +1417,7 @@ pub fn shell_run() -> ! {
     let mut line_buf = [0u8; 256];
 
     loop {
-        // Render colored shell prompt
-        vga_set_color(VgaColor::LightCyan, VgaColor::Black);
-        print!("pweos");
-        vga_set_color(VgaColor::LightGreen, VgaColor::Black);
-        let cwd = current_directory();
-        if cwd.is_empty() {
-            print!("> ");
-        } else {
-            print!(":/{}> ", cwd);
-        }
-        vga_set_color(VgaColor::White, VgaColor::Black);
+        shell_print_prompt();
 
         let len = shell_readline(&mut line_buf);
         if len == 0 {
