@@ -333,3 +333,4 @@ Runs completely in your terminal without opening a graphical window. You can int
 ```bash
 make clean
 ```
+> This project was heavily assisted by AI for educational purposes if you have any suggestions please send PRs
