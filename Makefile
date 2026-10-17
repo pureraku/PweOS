@@ -81,7 +81,7 @@ $(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h e
 $(USER_SETJMP_OBJ): examples/setjmp.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/pweos.h | $(BUILD)
+$(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/time.h examples/pweos.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) examples/user.ld
