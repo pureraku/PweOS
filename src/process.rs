@@ -35,7 +35,7 @@ const USER_STACK_TOP: usize = USER_MEMORY_END - 16;
 const USER_STACK_BOTTOM: usize = USER_MEMORY_END - USER_STACK_SIZE;
 const DEMO_CODE_LEN: usize = 29;
 const DEMO_MESSAGE: &[u8] = b"Hello from ring 3!\n";
-const MAX_OPEN_FILES: usize = 8;
+const MAX_OPEN_FILES: usize = 32;
 const MAX_PATH_LENGTH: usize = 128;
 const MAX_PROCESS_ARGS: usize = 32;
 const USER_ARG_BYTES_MAX: usize = 4096;
@@ -416,6 +416,23 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let length = regs.edx as usize;
             if length > 4096 || !user_range_is_valid(address, length) {
                 regs.eax = u32::MAX;
+                return;
+            }
+            if fd == 0 {
+                if length == 0 {
+                    regs.eax = 0;
+                    return;
+                }
+                let output = core::slice::from_raw_parts_mut(address as *mut u8, length);
+                core::arch::asm!("sti");
+                output[0] = crate::drivers::keyboard::keyboard_getchar();
+                let mut count = 1;
+                while count < output.len() && crate::drivers::keyboard::keyboard_has_char() {
+                    output[count] = crate::drivers::keyboard::keyboard_getchar();
+                    count += 1;
+                }
+                core::arch::asm!("cli");
+                regs.eax = count as u32;
                 return;
             }
             let mut files = OPEN_FILES.lock();

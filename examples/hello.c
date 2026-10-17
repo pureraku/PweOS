@@ -1,4 +1,5 @@
 #include "pweos_libc.h"
+#include "stdio.h"
 
 int main(int argc, char **argv) {
     static const char message[] = "Hello from C in PweOS user mode!\n";
@@ -6,11 +7,10 @@ int main(int argc, char **argv) {
     char *copy = (char *)malloc(length + 1);
     if (!copy) return 1;
     memcpy(copy, message, length + 1);
-    pwe_write(1, copy, length);
+    printf("%s", copy);
     free(copy);
     for (int index = 1; index < argc; index++) {
-        pwe_write(1, argv[index], strlen(argv[index]));
-        pwe_write(1, "\n", 1);
+        printf("%s\n", argv[index]);
     }
     return 0;
 }

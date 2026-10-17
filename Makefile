@@ -26,6 +26,7 @@ USER_OBJ = $(BUILD)/user.asm.o
 USER_CRT_OBJ = $(BUILD)/crt0.user.o
 USER_HELLO_OBJ = $(BUILD)/hello.user.o
 USER_RUNTIME_OBJ = $(BUILD)/pweos_libc.user.o
+USER_STDIO_OBJ = $(BUILD)/pweos_stdio.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
@@ -51,7 +52,7 @@ $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 $(USER_OBJ): src/arch/user.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_HELLO_OBJ): examples/hello.c examples/pweos.h examples/pweos_libc.h | $(BUILD)
+$(USER_HELLO_OBJ): examples/hello.c examples/stdio.h examples/pweos.h examples/pweos_libc.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
@@ -60,8 +61,11 @@ $(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
 $(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/pweos.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) -o $@
+$(USER_STDIO_OBJ): examples/pweos_stdio.c examples/stdio.h examples/pweos_libc.h examples/pweos.h | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+
+$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) -o $@
 
 $(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
