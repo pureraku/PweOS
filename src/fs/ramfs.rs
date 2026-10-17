@@ -189,6 +189,7 @@ static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
 
 include!(concat!(env!("OUT_DIR"), "/bundled_images.rs"));
 include!(concat!(env!("OUT_DIR"), "/bundled_programs.rs"));
+include!(concat!(env!("OUT_DIR"), "/bundled_tcc.rs"));
 
 pub fn ramfs_init() {
     let mut fs = RAMFS.lock();
@@ -229,6 +230,13 @@ pub fn ramfs_init() {
         let mut path = String::from("bin/");
         path.push_str(name);
         fs.create(&path, data);
+    }
+
+    fs.create_dir("tcc");
+    fs.create_dir("tcc/include");
+    fs.create_dir("tcc/lib");
+    for &(path, data) in BUNDLED_TCC_FILES {
+        fs.create(path, data);
     }
 }
 

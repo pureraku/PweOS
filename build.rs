@@ -71,4 +71,38 @@ fn main() {
         String::from("pub static BUNDLED_PROGRAMS: &[(&str, &[u8])] = &[];\n")
     };
     fs::write(programs_output, programs).unwrap();
+
+    let tcc_include = root.join("third_party/tinycc/include");
+    println!("cargo:rerun-if-changed={}", tcc_include.display());
+    let mut tcc_headers: Vec<_> = fs::read_dir(&tcc_include)
+        .expect("TinyCC include directory must exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .collect();
+    tcc_headers.sort();
+
+    let tcc_runtime = root.join("build/libtcc1.a");
+    println!("cargo:rerun-if-changed={}", tcc_runtime.display());
+    let mut tcc_files = String::from("pub static BUNDLED_TCC_FILES: &[(&str, &[u8])] = &[\n");
+    for header in tcc_headers {
+        let Some(name) = header.file_name().and_then(|name| name.to_str()) else { continue };
+        assert!(name.len() < 32, "TinyCC header filename is too long for RAMFS: {name}");
+        let header = header.canonicalize().unwrap();
+        tcc_files.push_str(&format!(
+            "    ({:?}, include_bytes!({:?})),\n",
+            format!("tcc/include/{name}"),
+            header.to_string_lossy()
+        ));
+    }
+    if tcc_runtime.exists() {
+        let runtime = tcc_runtime.canonicalize().unwrap();
+        tcc_files.push_str(&format!(
+            "    (\"tcc/lib/libtcc1.a\", include_bytes!({:?})),\n",
+            runtime.to_string_lossy()
+        ));
+    }
+    tcc_files.push_str("];\n");
+    let tcc_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_tcc.rs");
+    fs::write(tcc_output, tcc_files).unwrap();
 }

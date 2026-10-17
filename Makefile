@@ -118,7 +118,7 @@ $(BUILD)/tcc_pic86.o: third_party/tinycc/lib/pic86.S | $(BUILD)
 $(TCC_RUNTIME_LIB): $(TCC_RUNTIME_OBJS)
 	$(AR) rcs $@ $^
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(TCC_RUNTIME_LIB) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(USER_OBJ) $(KERNEL_LIB)
