@@ -194,7 +194,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         name: "exec",
-        desc: "Run a static i386 ELF program: exec <path>",
+        desc: "Run a static i386 ELF program: exec <path> [arguments...]",
         handler: cmd_exec,
     },
     Command {
@@ -624,12 +624,12 @@ fn cmd_cat(args: &[&str]) {
 
 fn cmd_exec(args: &[&str]) {
     if args.len() < 2 {
-        println!("Usage: exec <static i386 ELF path>");
+        println!("Usage: exec <static i386 ELF path> [arguments...]");
         return;
     }
     let path = resolve_path(args[1]);
     match ramfs_read(&path) {
-        Some(image) => match crate::process::run_elf(&image) {
+        Some(image) => match crate::process::run_elf(&image, &args[1..]) {
             Ok(status) => println!("Program exited with status {}.", status),
             Err(error) => println!("exec: {}", error),
         },

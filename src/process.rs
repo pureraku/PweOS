@@ -37,6 +37,8 @@ const DEMO_CODE_LEN: usize = 29;
 const DEMO_MESSAGE: &[u8] = b"Hello from ring 3!\n";
 const MAX_OPEN_FILES: usize = 8;
 const MAX_PATH_LENGTH: usize = 128;
+const MAX_PROCESS_ARGS: usize = 32;
+const USER_ARG_BYTES_MAX: usize = 4096;
 
 struct OpenFile {
     path: String,
@@ -120,8 +122,9 @@ pub fn run_ring3_demo() -> Option<i32> {
     }
 }
 
-pub fn run_elf(image: &[u8]) -> Result<i32, &'static str> {
+pub fn run_elf(image: &[u8], args: &[&str]) -> Result<i32, &'static str> {
     let (entry, segments, segment_count) = parse_elf32(image)?;
+    validate_process_args(args)?;
     if PROCESS_ACTIVE.swap(true, Ordering::AcqRel) {
         return Err("a user program is already active");
     }
@@ -145,11 +148,79 @@ pub fn run_elf(image: &[u8]) -> Result<i32, &'static str> {
         }
 
         USER_PROGRAM_BREAK = USER_HEAP_BASE;
-        let status = user_enter(entry as u32, USER_STACK_TOP as u32) as i32;
+        let stack = match build_initial_stack(args) {
+            Ok(stack) => stack,
+            Err(error) => {
+                reset_process_resources();
+                PROCESS_ACTIVE.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
+        let status = user_enter(entry as u32, stack) as i32;
         reset_process_resources();
         PROCESS_ACTIVE.store(false, Ordering::Release);
         Ok(status)
     }
+}
+
+fn validate_process_args(args: &[&str]) -> Result<(), &'static str> {
+    if args.len() > MAX_PROCESS_ARGS {
+        return Err("too many process arguments");
+    }
+    let mut total = 0usize;
+    for arg in args {
+        if arg.as_bytes().contains(&0) {
+            return Err("process arguments cannot contain NUL bytes");
+        }
+        total = total
+            .checked_add(arg.len() + 1)
+            .ok_or("process argument size overflows")?;
+    }
+    if total > USER_ARG_BYTES_MAX {
+        return Err("process arguments are too large");
+    }
+    Ok(())
+}
+
+fn build_initial_stack(args: &[&str]) -> Result<u32, &'static str> {
+    let mut stack = USER_STACK_TOP;
+    let mut argv = [0u32; MAX_PROCESS_ARGS];
+    for (index, arg) in args.iter().enumerate().rev() {
+        let bytes = arg.as_bytes();
+        let length = bytes.len() + 1;
+        stack = stack.checked_sub(length).ok_or("process stack overflows")?;
+        if stack < USER_STACK_BOTTOM {
+            return Err("process arguments exceed the user stack");
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), stack as *mut u8, bytes.len());
+            *((stack + bytes.len()) as *mut u8) = 0;
+        }
+        argv[index] = stack as u32;
+    }
+
+    let vector_words = args.len() + 5; // argc, argv pointers and NULL, envp NULL, AT_NULL pair.
+    let vector_bytes = vector_words * core::mem::size_of::<u32>();
+    let vector_start = stack
+        .checked_sub(vector_bytes)
+        .ok_or("process stack overflows")?
+        & !0x0f;
+    if vector_start < USER_STACK_BOTTOM {
+        return Err("process arguments exceed the user stack");
+    }
+
+    unsafe {
+        let words = vector_start as *mut u32;
+        words.write(args.len() as u32);
+        for (index, address) in argv[..args.len()].iter().enumerate() {
+            words.add(index + 1).write(*address);
+        }
+        words.add(args.len() + 1).write(0); // argv terminator
+        words.add(args.len() + 2).write(0); // empty envp
+        words.add(args.len() + 3).write(0); // AT_NULL
+        words.add(args.len() + 4).write(0);
+    }
+    Ok(vector_start as u32)
 }
 
 fn reset_process_resources() {

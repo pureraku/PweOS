@@ -23,6 +23,7 @@ VIDEO_DRIVE = -drive file=$(VIDEO_IMAGE),format=raw,if=ide,index=0
 ENTRY_OBJ = $(BUILD)/entry.asm.o
 ISR_OBJ = $(BUILD)/isr.asm.o
 USER_OBJ = $(BUILD)/user.asm.o
+USER_CRT_OBJ = $(BUILD)/crt0.user.o
 USER_HELLO_OBJ = $(BUILD)/hello.user.o
 USER_RUNTIME_OBJ = $(BUILD)/pweos_libc.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
@@ -53,11 +54,14 @@ $(USER_OBJ): src/arch/user.asm | $(BUILD)
 $(USER_HELLO_OBJ): examples/hello.c examples/pweos.h examples/pweos_libc.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
+$(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
+
 $(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/pweos.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_HELLO_ELF): $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) -o $@
+$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) -o $@
 
 $(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
