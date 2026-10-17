@@ -17,6 +17,13 @@ const SYS_OPEN: u32 = 2;
 const SYS_READ: u32 = 3;
 const SYS_CLOSE: u32 = 4;
 const SYS_BRK: u32 = 5;
+const SYS_FWRITE: u32 = 6;
+const OPEN_WRONLY: u32 = 0x0001;
+const OPEN_RDWR: u32 = 0x0002;
+const OPEN_CREATE: u32 = 0x0040;
+const OPEN_TRUNCATE: u32 = 0x0200;
+const OPEN_APPEND: u32 = 0x0400;
+const OPEN_SUPPORTED_FLAGS: u32 = 0x0643;
 const ELF32_HEADER_SIZE: usize = 52;
 const ELF32_PROGRAM_HEADER_SIZE: usize = 32;
 const MAX_LOAD_SEGMENTS: usize = 16;
@@ -31,6 +38,9 @@ const MAX_PATH_LENGTH: usize = 128;
 struct OpenFile {
     path: String,
     offset: usize,
+    readable: bool,
+    writable: bool,
+    append: bool,
 }
 
 static OPEN_FILES: Spinlock<Vec<Option<OpenFile>>> = Spinlock::new(Vec::new());
@@ -275,7 +285,15 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
                 return;
             };
-            if regs.ecx != 0 || path_length == 0 {
+            let flags = regs.ecx;
+            let access_mode = flags & 3;
+            let writable = access_mode == OPEN_WRONLY || access_mode == OPEN_RDWR;
+            let readable = access_mode == 0 || access_mode == OPEN_RDWR;
+            if flags & !OPEN_SUPPORTED_FLAGS != 0
+                || access_mode == 3
+                || (flags & OPEN_TRUNCATE != 0 && !writable)
+                || path_length == 0
+            {
                 regs.eax = u32::MAX;
                 return;
             }
@@ -284,12 +302,31 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 return;
             };
             if crate::fs::ramfs::ramfs_file_len(path).is_none() {
+                if flags & OPEN_CREATE == 0 || !crate::fs::ramfs::ramfs_create(path, &[]) {
+                    regs.eax = u32::MAX;
+                    return;
+                }
+            }
+            if flags & OPEN_TRUNCATE != 0
+                && !crate::fs::ramfs::ramfs_write_at(path, 0, &[], true)
+            {
                 regs.eax = u32::MAX;
                 return;
             }
+            let offset = if flags & OPEN_APPEND != 0 {
+                crate::fs::ramfs::ramfs_file_len(path).unwrap_or(0)
+            } else {
+                0
+            };
             let mut files = OPEN_FILES.lock();
             if let Some((fd, slot)) = files.iter_mut().enumerate().skip(3).find(|(_, slot)| slot.is_none()) {
-                *slot = Some(OpenFile { path: String::from(path), offset: 0 });
+                *slot = Some(OpenFile {
+                    path: String::from(path),
+                    offset,
+                    readable,
+                    writable,
+                    append: flags & OPEN_APPEND != 0,
+                });
                 regs.eax = fd as u32;
             } else {
                 regs.eax = u32::MAX;
@@ -308,6 +345,10 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
                 return;
             };
+            if !file.readable {
+                regs.eax = u32::MAX;
+                return;
+            }
             let buffer = core::slice::from_raw_parts_mut(address as *mut u8, length);
             match crate::fs::ramfs::ramfs_read_at(&file.path, file.offset, buffer) {
                 Some(count) => {
@@ -322,6 +363,43 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let mut files = OPEN_FILES.lock();
             if fd >= 3 && fd < files.len() && files[fd].take().is_some() {
                 regs.eax = 0;
+            } else {
+                regs.eax = u32::MAX;
+            }
+        }
+        SYS_FWRITE => {
+            let fd = regs.ebx as usize;
+            let address = regs.ecx;
+            let length = regs.edx as usize;
+            if length > 4096 || !user_range_is_valid(address, length) {
+                regs.eax = u32::MAX;
+                return;
+            }
+            let bytes = core::slice::from_raw_parts(address as *const u8, length);
+            if fd == 1 || fd == 2 {
+                if let Ok(text) = core::str::from_utf8(bytes) {
+                    print!("{}", text);
+                    regs.eax = length as u32;
+                } else {
+                    regs.eax = u32::MAX;
+                }
+                return;
+            }
+            let mut files = OPEN_FILES.lock();
+            let Some(Some(file)) = files.get_mut(fd) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            if !file.writable {
+                regs.eax = u32::MAX;
+                return;
+            }
+            if file.append {
+                file.offset = crate::fs::ramfs::ramfs_file_len(&file.path).unwrap_or(file.offset);
+            }
+            if crate::fs::ramfs::ramfs_write_at(&file.path, file.offset, bytes, false) {
+                file.offset += length;
+                regs.eax = length as u32;
             } else {
                 regs.eax = u32::MAX;
             }

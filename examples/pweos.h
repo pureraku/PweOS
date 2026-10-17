@@ -11,6 +11,16 @@ enum {
     PWE_SYS_READ = 3,
     PWE_SYS_CLOSE = 4,
     PWE_SYS_BRK = 5,
+    PWE_SYS_FWRITE = 6,
+};
+
+enum {
+    PWE_O_RDONLY = 0,
+    PWE_O_WRONLY = 1,
+    PWE_O_RDWR = 2,
+    PWE_O_CREAT = 0x0040,
+    PWE_O_TRUNC = 0x0200,
+    PWE_O_APPEND = 0x0400,
 };
 
 static inline int pwe_syscall0(unsigned int number) {
@@ -31,8 +41,8 @@ static inline int pwe_syscall3(unsigned int number, unsigned int arg1,
     return (int)number;
 }
 
-static inline pwe_ssize_t pwe_write(const void *buffer, pwe_size_t length) {
-    return pwe_syscall3(PWE_SYS_WRITE, (unsigned int)buffer, length, 0);
+static inline pwe_ssize_t pwe_write(int fd, const void *buffer, pwe_size_t length) {
+    return pwe_syscall3(PWE_SYS_FWRITE, (unsigned int)fd, (unsigned int)buffer, length);
 }
 
 static inline int pwe_open(const char *path, int flags) {

@@ -136,6 +136,27 @@ impl Ramfs {
         }
     }
 
+    pub fn write_at(&mut self, name: &str, offset: usize, data: &[u8], truncate: bool) -> bool {
+        if self.find(name).is_none() {
+            if offset != 0 || !self.create(name, &[]) {
+                return false;
+            }
+        }
+        let Some(node) = self.find_mut(name) else { return false };
+        if truncate {
+            node.data.clear();
+        }
+        let Some(end) = offset.checked_add(data.len()) else { return false };
+        if end > node.data.len() {
+            if node.data.try_reserve(end - node.data.len()).is_err() {
+                return false;
+            }
+            node.data.resize(end, 0);
+        }
+        node.data[offset..end].copy_from_slice(data);
+        true
+    }
+
     pub fn delete(&mut self, name: &str) -> bool {
         if let Some(pos) = self.files.iter().position(|n| n.name == name) {
             self.files.remove(pos);
@@ -244,6 +265,10 @@ pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usi
     let count = output.len().min(node.data.len() - offset);
     output[..count].copy_from_slice(&node.data[offset..offset + count]);
     Some(count)
+}
+
+pub fn ramfs_write_at(name: &str, offset: usize, data: &[u8], truncate: bool) -> bool {
+    RAMFS.lock().write_at(name, offset, data, truncate)
 }
 
 pub fn ramfs_write(name: &str, data: &[u8], append: bool) -> bool {
