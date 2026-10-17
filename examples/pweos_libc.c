@@ -175,9 +175,24 @@ int memcmp(const void *left, const void *right, pwe_size_t length) {
     return 0;
 }
 
+void *memchr(const void *memory, int character, pwe_size_t length) {
+    const unsigned char *bytes = (const unsigned char *)memory;
+    unsigned char target = (unsigned char)character;
+    for (pwe_size_t index = 0; index < length; index++) {
+        if (bytes[index] == target) return (void *)(bytes + index);
+    }
+    return (void *)0;
+}
+
 pwe_size_t strlen(const char *text) {
     pwe_size_t length = 0;
     while (text[length]) length++;
+    return length;
+}
+
+pwe_size_t strnlen(const char *text, pwe_size_t maximum) {
+    pwe_size_t length = 0;
+    while (length < maximum && text[length]) length++;
     return length;
 }
 

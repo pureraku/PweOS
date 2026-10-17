@@ -60,7 +60,7 @@ $(USER_HELLO_OBJ): examples/hello.c examples/stdio.h examples/pweos.h examples/p
 $(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
 
-$(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/pweos.h | $(BUILD)
+$(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/string.h examples/pweos.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_STDIO_OBJ): examples/pweos_stdio.c examples/stdio.h examples/pweos_libc.h examples/pweos.h | $(BUILD)
