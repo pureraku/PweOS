@@ -19,6 +19,8 @@ const SYS_CLOSE: u32 = 4;
 const SYS_BRK: u32 = 5;
 const SYS_FWRITE: u32 = 6;
 const SYS_LSEEK: u32 = 7;
+const SYS_UNLINK: u32 = 8;
+const SYS_GETCWD: u32 = 9;
 const OPEN_WRONLY: u32 = 0x0001;
 const OPEN_RDWR: u32 = 0x0002;
 const OPEN_CREATE: u32 = 0x0040;
@@ -302,6 +304,10 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
                 return;
             };
+            let Some(path) = normalize_user_path(path) else {
+                regs.eax = u32::MAX;
+                return;
+            };
             if crate::fs::ramfs::ramfs_file_len(path).is_none() {
                 if flags & OPEN_CREATE == 0 || !crate::fs::ramfs::ramfs_create(path, &[]) {
                     regs.eax = u32::MAX;
@@ -431,6 +437,32 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             file.offset = position as usize;
             regs.eax = position as u32;
         }
+        SYS_UNLINK => {
+            let mut path_bytes = [0u8; MAX_PATH_LENGTH];
+            let Some(path_length) = user_read_c_string(regs.ebx, &mut path_bytes) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            let Ok(path) = core::str::from_utf8(&path_bytes[..path_length]) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            let Some(path) = normalize_user_path(path) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            regs.eax = if crate::fs::ramfs::ramfs_delete(path) { 0 } else { u32::MAX };
+        }
+        SYS_GETCWD => {
+            let address = regs.ebx;
+            let length = regs.ecx as usize;
+            if length < 2 || !user_range_is_valid(address, 2) || length > 4096 {
+                regs.eax = u32::MAX;
+                return;
+            }
+            core::ptr::copy_nonoverlapping(b"/\0".as_ptr(), address as *mut u8, 2);
+            regs.eax = address;
+        }
         SYS_BRK => {
             let requested = regs.ebx as usize;
             unsafe {
@@ -445,5 +477,15 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             }
         }
         _ => regs.eax = u32::MAX,
+    }
+}
+
+fn normalize_user_path(path: &str) -> Option<&str> {
+    let path = path.trim_start_matches('/');
+    let path = path.strip_prefix("./").unwrap_or(path);
+    if path.is_empty() || path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        None
+    } else {
+        Some(path)
     }
 }

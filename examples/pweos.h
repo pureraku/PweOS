@@ -13,6 +13,8 @@ enum {
     PWE_SYS_BRK = 5,
     PWE_SYS_FWRITE = 6,
     PWE_SYS_LSEEK = 7,
+    PWE_SYS_UNLINK = 8,
+    PWE_SYS_GETCWD = 9,
 };
 
 enum {
@@ -67,6 +69,16 @@ static inline int pwe_close(int fd) {
 static inline int pwe_lseek(int fd, int offset, int whence) {
     return pwe_syscall3(PWE_SYS_LSEEK, (unsigned int)fd,
                         (unsigned int)offset, (unsigned int)whence);
+}
+
+static inline int pwe_unlink(const char *path) {
+    return pwe_syscall1(PWE_SYS_UNLINK, (unsigned int)path);
+}
+
+static inline char *pwe_getcwd(char *buffer, pwe_size_t length) {
+    unsigned int address = (unsigned int)buffer;
+    int result = pwe_syscall3(PWE_SYS_GETCWD, address, length, 0);
+    return result < 0 ? (char *)0 : (char *)address;
 }
 
 static inline unsigned int pwe_brk(unsigned int address) {
