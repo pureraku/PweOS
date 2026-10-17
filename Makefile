@@ -3,6 +3,7 @@ LD = ld.lld
 CARGO = cargo
 QEMU = qemu-system-i386
 CLANG ?= clang
+AR ?= ar
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -34,6 +35,8 @@ USER_SETJMP_OBJ = $(BUILD)/setjmp.user.o
 USER_TIME_OBJ = $(BUILD)/pweos_time.user.o
 USER_MATH_OBJ = $(BUILD)/pweos_math.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
+TCC_RUNTIME_OBJS = $(BUILD)/tcc_libtcc1.o $(BUILD)/tcc_stdatomic.o $(BUILD)/tcc_atomic.o $(BUILD)/tcc_builtin.o $(BUILD)/tcc_alloca.o $(BUILD)/tcc_alloca_bt.o $(BUILD)/tcc_pic86.o
+TCC_RUNTIME_LIB = $(BUILD)/libtcc1.a
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
@@ -90,6 +93,30 @@ $(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h exampl
 
 $(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) examples/user.ld
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) -o $@
+
+$(BUILD)/tcc_libtcc1.o: third_party/tinycc/lib/libtcc1.c third_party/tinycc/config.h | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+
+$(BUILD)/tcc_stdatomic.o: third_party/tinycc/lib/stdatomic.c | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+
+$(BUILD)/tcc_atomic.o: third_party/tinycc/lib/atomic.S | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
+
+$(BUILD)/tcc_builtin.o: third_party/tinycc/lib/builtin.c | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+
+$(BUILD)/tcc_alloca.o: third_party/tinycc/lib/alloca.S | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
+
+$(BUILD)/tcc_alloca_bt.o: third_party/tinycc/lib/alloca-bt.S | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
+
+$(BUILD)/tcc_pic86.o: third_party/tinycc/lib/pic86.S | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
+
+$(TCC_RUNTIME_LIB): $(TCC_RUNTIME_OBJS)
+	$(AR) rcs $@ $^
 
 $(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
