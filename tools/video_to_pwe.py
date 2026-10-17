@@ -1,7 +1,7 @@
 """Convert a video into PweOS's compact 320x200 RGB332 video format.
 
 Requires ffmpeg on PATH. Output files belong in assets/ and are packed into the
-companion video disk when the OS is built.
+companion data disk when the OS is built.
 """
 
 from __future__ import annotations

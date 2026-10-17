@@ -188,7 +188,6 @@ fn base_name(path: &str) -> &str {
 static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
 
 include!(concat!(env!("OUT_DIR"), "/bundled_images.rs"));
-include!(concat!(env!("OUT_DIR"), "/bundled_programs.rs"));
 include!(concat!(env!("OUT_DIR"), "/bundled_tcc.rs"));
 
 pub fn ramfs_init() {
@@ -226,12 +225,6 @@ pub fn ramfs_init() {
     fs.create_dir("videos");
 
     fs.create_dir("bin");
-    for &(name, data) in BUNDLED_PROGRAMS {
-        let mut path = String::from("bin/");
-        path.push_str(name);
-        fs.create(&path, data);
-    }
-
     fs.create_dir("tcc");
     fs.create_dir("tcc/include");
     fs.create_dir("tcc/include/sys");
@@ -242,6 +235,9 @@ pub fn ramfs_init() {
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
+    if disk_program_metadata(name).is_some() {
+        return false;
+    }
     RAMFS.lock().create(name, initial_data)
 }
 
@@ -250,10 +246,16 @@ pub fn ramfs_create_dir(name: &str) -> bool {
 }
 
 pub fn ramfs_delete_dir(path: &str) -> bool {
+    if is_disk_mount(path) || ramfs_count_in(path) != 0 {
+        return false;
+    }
     RAMFS.lock().delete_dir(path)
 }
 
 pub fn ramfs_nuke(path: &str) -> bool {
+    if is_disk_mount(path) {
+        return false;
+    }
     RAMFS.lock().nuke(path)
 }
 
@@ -262,10 +264,7 @@ pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
     if let Some(data) = RAMFS.lock().read(name) {
         return Some(data);
     }
-    if name != "bin/tcc.elf" {
-        return None;
-    }
-    let (start_sector, byte_len) = TCC_PROGRAM_DISK?;
+    let (start_sector, byte_len) = disk_program_metadata(name)?;
     let sector_count = (byte_len as usize).div_ceil(512);
     let mut data = Vec::new();
     data.try_reserve_exact(sector_count * 512).ok()?;
@@ -281,25 +280,37 @@ pub fn ramfs_file_len(name: &str) -> Option<usize> {
         .lock()
         .find(name)
         .map(|node| node.data.len())
-        .or_else(|| (name == "bin/tcc.elf").then_some(TCC_PROGRAM_DISK?.1 as usize))
+        .or_else(|| disk_program_metadata(name).map(|(_, size)| size))
 }
 
 pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usize> {
-    let fs = RAMFS.lock();
-    let node = fs.find(name)?;
-    if offset >= node.data.len() {
-        return Some(0);
+    let name = name.strip_prefix('/').unwrap_or(name);
+    {
+        let fs = RAMFS.lock();
+        if let Some(node) = fs.find(name) {
+            if offset >= node.data.len() {
+                return Some(0);
+            }
+            let count = output.len().min(node.data.len() - offset);
+            output[..count].copy_from_slice(&node.data[offset..offset + count]);
+            return Some(count);
+        }
     }
-    let count = output.len().min(node.data.len() - offset);
-    output[..count].copy_from_slice(&node.data[offset..offset + count]);
-    Some(count)
+    let (start_sector, byte_len) = disk_program_metadata(name)?;
+    read_disk_file_at(start_sector, byte_len, offset, output)
 }
 
 pub fn ramfs_write_at(name: &str, offset: usize, data: &[u8], truncate: bool) -> bool {
+    if disk_program_metadata(name).is_some() {
+        return false;
+    }
     RAMFS.lock().write_at(name, offset, data, truncate)
 }
 
 pub fn ramfs_write(name: &str, data: &[u8], append: bool) -> bool {
+    if disk_program_metadata(name).is_some() {
+        return false;
+    }
     RAMFS.lock().write(name, data, append)
 }
 
@@ -308,7 +319,10 @@ pub fn ramfs_delete(name: &str) -> bool {
 }
 
 pub fn ramfs_count() -> usize {
-    RAMFS.lock().count() + VIDEO_FILES.len() + usize::from(TCC_PROGRAM_DISK.is_some())
+    RAMFS.lock().count()
+        + VIDEO_FILES.len()
+        + USER_PROGRAM_DISK.len()
+        + usize::from(TCC_PROGRAM_DISK.is_some())
 }
 
 pub fn ramfs_is_dir(path: &str) -> bool {
@@ -319,7 +333,7 @@ pub fn ramfs_count_in(path: &str) -> usize {
     let count = RAMFS.lock().count_in(path);
     match path {
         "videos" => count + VIDEO_FILES.len(),
-        "bin" => count + usize::from(TCC_PROGRAM_DISK.is_some()),
+        "bin" => count + USER_PROGRAM_DISK.len() + usize::from(TCC_PROGRAM_DISK.is_some()),
         _ => count,
     }
 }
@@ -340,8 +354,47 @@ pub fn ramfs_list<F: FnMut(&str, usize, bool)>(path: &str, cb: F) {
         }
     }
     if path == "bin" {
+        for &(name, _, size) in USER_PROGRAM_DISK {
+            callback(name, size as usize, false);
+        }
         if let Some((_, size)) = TCC_PROGRAM_DISK {
             callback("tcc.elf", size as usize, false);
         }
     }
+}
+
+fn disk_program_metadata(path: &str) -> Option<(u32, usize)> {
+    let name = path.strip_prefix("bin/")?;
+    if name == "tcc.elf" {
+        return TCC_PROGRAM_DISK.map(|(sector, size)| (sector, size as usize));
+    }
+    USER_PROGRAM_DISK
+        .iter()
+        .find(|(program_name, _, _)| *program_name == name)
+        .map(|(_, sector, size)| (*sector, *size as usize))
+}
+
+fn is_disk_mount(path: &str) -> bool {
+    matches!(path, "bin" | "videos")
+}
+
+fn read_disk_file_at(
+    start_sector: u32,
+    file_size: usize,
+    offset: usize,
+    output: &mut [u8],
+) -> Option<usize> {
+    if offset >= file_size || output.is_empty() {
+        return Some(0);
+    }
+    let count = output.len().min(file_size - offset);
+    let first_sector = start_sector.checked_add((offset / 512) as u32)?;
+    let sector_offset = offset % 512;
+    let sector_count = (sector_offset + count).div_ceil(512);
+    let mut sectors = Vec::new();
+    sectors.try_reserve_exact(sector_count * 512).ok()?;
+    sectors.resize(sector_count * 512, 0);
+    crate::drivers::ata::read_sectors(first_sector, sector_count, &mut sectors).ok()?;
+    output[..count].copy_from_slice(&sectors[sector_offset..sector_offset + count]);
+    Some(count)
 }

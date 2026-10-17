@@ -1,0 +1,6 @@
+calc
+cat
+echo
+grep
+hello
+vi

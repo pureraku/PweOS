@@ -33,6 +33,10 @@ char *getcwd(char *buffer, size_t length) {
     return pwe_getcwd(buffer, (pwe_size_t)length);
 }
 
+int isatty(int fd) {
+    return pwe_isatty(fd);
+}
+
 char *realpath(const char *path, char *resolved_path) {
     char cwd[4096];
     char *absolute;

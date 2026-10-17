@@ -16,5 +16,6 @@ int close(int fd);
 off_t lseek(int fd, off_t offset, int whence);
 int unlink(const char *path);
 char *getcwd(char *buffer, size_t length);
+int isatty(int fd);
 
 #endif

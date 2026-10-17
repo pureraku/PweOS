@@ -10,7 +10,7 @@ use crate::fs::ramfs::ramfs_video_metadata;
 
 const PIXELS: usize = WIDTH * HEIGHT;
 
-/// Play a bundled video directly from the companion IDE disk. Only one
+/// Play a bundled video directly from the companion IDE data disk. Only one
 /// encoded frame is kept in memory at a time. `Ok(false)` means not found.
 pub fn play_bundled(path: &str) -> Result<bool, &'static str> {
     let Some(name) = path.strip_prefix("videos/") else { return Ok(false) };

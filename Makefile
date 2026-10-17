@@ -18,15 +18,13 @@ BUILD = build
 BOOT_BIN = $(BUILD)/boot.bin
 KERNEL_BIN = $(BUILD)/kernel.bin
 IMAGE = $(BUILD)/pweos.img
-VIDEO_IMAGE = $(BUILD)/videos.img
-VIDEO_DRIVE = -drive file=$(VIDEO_IMAGE),format=raw,if=ide,index=0
+DATA_IMAGE = $(BUILD)/data.img
+DATA_DRIVE = -drive file=$(DATA_IMAGE),format=raw,if=ide,index=0
 
 ENTRY_OBJ = $(BUILD)/entry.asm.o
 ISR_OBJ = $(BUILD)/isr.asm.o
 USER_OBJ = $(BUILD)/user.asm.o
 USER_CRT_OBJ = $(BUILD)/crt0.user.o
-USER_HELLO_OBJ = $(BUILD)/hello.user.o
-USER_VI_OBJ = $(BUILD)/vi.user.o
 USER_RUNTIME_OBJ = $(BUILD)/pweos_libc.user.o
 USER_STDIO_OBJ = $(BUILD)/pweos_stdio.user.o
 USER_STDLIB_OBJ = $(BUILD)/pweos_stdlib.user.o
@@ -35,8 +33,8 @@ USER_UNISTD_OBJ = $(BUILD)/pweos_unistd.user.o
 USER_SETJMP_OBJ = $(BUILD)/setjmp.user.o
 USER_TIME_OBJ = $(BUILD)/pweos_time.user.o
 USER_MATH_OBJ = $(BUILD)/pweos_math.user.o
-USER_HELLO_ELF = $(BUILD)/hello.elf
-USER_VI_ELF = $(BUILD)/vi.elf
+USER_PROGRAMS = $(shell cat examples/user_programs.txt)
+USER_PROGRAM_ELFS = $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGRAMS)))
 TCC_OBJ = $(BUILD)/tcc.user.o
 TCC_ELF = $(BUILD)/tcc.elf
 TCC_SOURCES = $(wildcard third_party/tinycc/*.c third_party/tinycc/*.h third_party/tinycc/include/*.h examples/*.h examples/sys/*.h)
@@ -49,7 +47,7 @@ LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
 
 .PHONY: all run run-fullscreen run-curses run-serial run-headless clean check clippy
 
-all: $(IMAGE) $(VIDEO_IMAGE)
+all: $(IMAGE) $(DATA_IMAGE)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -67,10 +65,7 @@ $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 $(USER_OBJ): src/arch/user.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_HELLO_OBJ): examples/hello.c examples/stdio.h examples/pweos.h examples/pweos_libc.h Makefile | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
-
-$(USER_VI_OBJ): examples/vi.c examples/stdio.h examples/stdlib.h examples/string.h examples/pweos.h Makefile | $(BUILD)
+$(BUILD)/%.user.o: examples/%.c $(wildcard examples/*.h) Makefile | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
@@ -100,11 +95,8 @@ $(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/time.h exam
 $(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h examples/ctype.h examples/errno.h Makefile | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
-
-$(USER_VI_ELF): $(USER_CRT_OBJ) $(USER_VI_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_VI_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
+$(BUILD)/%.elf: $(USER_CRT_OBJ) $(BUILD)/%.user.o $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(BUILD)/$*.user.o $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
 $(PWEOS_RUNTIME_OBJ): $(USER_CRT_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) Makefile
 	$(LD) -m elf_i386 -r $(USER_CRT_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
@@ -133,7 +125,7 @@ $(TCC_OBJ): third_party/tinycc/tcc.c $(TCC_SOURCES) Makefile | $(BUILD)
 $(TCC_ELF): $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld Makefile
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(USER_VI_ELF) $(TCC_ELF) $(TCC_RUNTIME_OBJ) $(PWEOS_RUNTIME_OBJ) build.rs Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_PROGRAM_ELFS) examples/user_programs.txt $(TCC_ELF) $(TCC_RUNTIME_OBJ) $(PWEOS_RUNTIME_OBJ) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(USER_OBJ) $(KERNEL_LIB)
@@ -144,23 +136,23 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 	cat $(BOOT_BIN) $(KERNEL_BIN) > $(IMAGE)
 	truncate -s 1440K $(IMAGE)
 
-$(VIDEO_IMAGE): $(wildcard assets/*.pwevid) $(TCC_ELF) tools/pack_videos.py | $(BUILD)
-	python3 tools/pack_videos.py assets $(TCC_ELF) $(VIDEO_IMAGE)
+$(DATA_IMAGE): $(wildcard assets/*.pwevid) $(USER_PROGRAM_ELFS) examples/user_programs.txt $(TCC_ELF) tools/pack_data_disk.py | $(BUILD)
+	python3 tools/pack_data_disk.py assets examples/user_programs.txt $(BUILD) $(TCC_ELF) $(DATA_IMAGE)
 
-run: $(IMAGE) $(VIDEO_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_DISPLAY)
+run: $(IMAGE) $(DATA_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY)
 
-run-fullscreen: $(IMAGE) $(VIDEO_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_FULLSCREEN)
+run-fullscreen: $(IMAGE) $(DATA_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_FULLSCREEN)
 
-run-curses: $(IMAGE) $(VIDEO_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) -display curses
+run-curses: $(IMAGE) $(DATA_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) -display curses
 
-run-serial: $(IMAGE) $(VIDEO_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_DISPLAY) -serial stdio
+run-serial: $(IMAGE) $(DATA_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY) -serial stdio
 
-run-headless: $(IMAGE) $(VIDEO_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) -display none -serial stdio
+run-headless: $(IMAGE) $(DATA_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) -display none -serial stdio
 
 check:
 	$(CARGO) check

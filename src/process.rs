@@ -1,4 +1,4 @@
-//! Temporary single-process user-mode execution support.
+//! Single-process user-mode execution support.
 //!
 //! User memory is a dedicated identity-mapped arena. The runtime currently
 //! supports one active process and a small set of PweOS-specific syscalls.
@@ -9,6 +9,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::isr::Registers;
 use crate::arch::paging::{user_range_is_valid, user_read_c_string, USER_HEAP_BASE, USER_MEMORY_BASE, USER_MEMORY_END};
+use crate::drivers::vga::vga_putchar;
 use crate::sync::Spinlock;
 
 const SYS_EXIT: u32 = 0;
@@ -23,6 +24,7 @@ const SYS_UNLINK: u32 = 8;
 const SYS_GETCWD: u32 = 9;
 const SYS_GETTIMEOFDAY: u32 = 10;
 const SYS_CONSOLE: u32 = 11;
+const SYS_ISATTY: u32 = 12;
 const CONSOLE_CLEAR: u32 = 0;
 const CONSOLE_SET_CURSOR: u32 = 1;
 const OPEN_WRONLY: u32 = 0x0001;
@@ -51,6 +53,7 @@ struct OpenFile {
 }
 
 static OPEN_FILES: Spinlock<Vec<Option<OpenFile>>> = Spinlock::new(Vec::new());
+static PROCESS_STDIN: Spinlock<Option<(Vec<u8>, usize)>> = Spinlock::new(None);
 static mut USER_PROGRAM_BREAK: usize = USER_HEAP_BASE;
 
 #[derive(Clone, Copy)]
@@ -87,6 +90,14 @@ extern "C" {
 }
 
 pub fn run_elf(image: &[u8], args: &[&str]) -> Result<i32, &'static str> {
+    run_elf_with_stdin(image, args, None)
+}
+
+pub fn run_elf_with_stdin(
+    image: &[u8],
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<i32, &'static str> {
     let (entry, segments, segment_count) = parse_elf32(image)?;
     validate_process_args(args)?;
     if PROCESS_ACTIVE.swap(true, Ordering::AcqRel) {
@@ -95,6 +106,7 @@ pub fn run_elf(image: &[u8], args: &[&str]) -> Result<i32, &'static str> {
 
     unsafe {
         reset_process_resources();
+        *PROCESS_STDIN.lock() = stdin.map(|bytes| (bytes.to_vec(), 0));
         core::ptr::write_bytes(
             USER_MEMORY_BASE as *mut u8,
             0,
@@ -192,6 +204,7 @@ fn reset_process_resources() {
     let mut files = OPEN_FILES.lock();
     files.clear();
     files.resize_with(MAX_OPEN_FILES, || None);
+    *PROCESS_STDIN.lock() = None;
 }
 
 fn parse_elf32(image: &[u8]) -> Result<(usize, [LoadSegment; MAX_LOAD_SEGMENTS], usize), &'static str> {
@@ -308,12 +321,10 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let length = regs.ecx as usize;
             if user_range_is_valid(address, length) {
                 let bytes = core::slice::from_raw_parts(address as *const u8, length);
-                if let Ok(text) = core::str::from_utf8(bytes) {
-                    print!("{}", text);
-                    regs.eax = length as u32;
-                } else {
-                    regs.eax = u32::MAX;
+                for &byte in bytes {
+                    vga_putchar(byte);
                 }
+                regs.eax = length as u32;
             } else {
                 regs.eax = u32::MAX;
             }
@@ -332,6 +343,14 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             }
             _ => regs.eax = u32::MAX,
         },
+        SYS_ISATTY => {
+            let fd = regs.ebx as usize;
+            regs.eax = if fd < 3 && PROCESS_STDIN.lock().is_none() {
+                1
+            } else {
+                0
+            };
+        }
         SYS_OPEN => {
             let mut path_bytes = [0u8; MAX_PATH_LENGTH];
             let Some(path_length) = user_read_c_string(regs.ebx, &mut path_bytes) else {
@@ -358,27 +377,27 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
                 return;
             };
-            if crate::fs::ramfs::ramfs_file_len(path).is_none() {
-                if flags & OPEN_CREATE == 0 || !crate::fs::ramfs::ramfs_create(path, &[]) {
+            if crate::fs::ramfs::ramfs_file_len(&path).is_none() {
+                if flags & OPEN_CREATE == 0 || !crate::fs::ramfs::ramfs_create(&path, &[]) {
                     regs.eax = u32::MAX;
                     return;
                 }
             }
             if flags & OPEN_TRUNCATE != 0
-                && !crate::fs::ramfs::ramfs_write_at(path, 0, &[], true)
+                && !crate::fs::ramfs::ramfs_write_at(&path, 0, &[], true)
             {
                 regs.eax = u32::MAX;
                 return;
             }
             let offset = if flags & OPEN_APPEND != 0 {
-                crate::fs::ramfs::ramfs_file_len(path).unwrap_or(0)
+                crate::fs::ramfs::ramfs_file_len(&path).unwrap_or(0)
             } else {
                 0
             };
             let mut files = OPEN_FILES.lock();
             if let Some((fd, slot)) = files.iter_mut().enumerate().skip(3).find(|(_, slot)| slot.is_none()) {
                 *slot = Some(OpenFile {
-                    path: String::from(path),
+                    path,
                     offset,
                     readable,
                     writable,
@@ -403,6 +422,15 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                     return;
                 }
                 let output = core::slice::from_raw_parts_mut(address as *mut u8, length);
+                let mut process_stdin = PROCESS_STDIN.lock();
+                if let Some((input, offset)) = process_stdin.as_mut() {
+                    let count = length.min(input.len().saturating_sub(*offset));
+                    output[..count].copy_from_slice(&input[*offset..*offset + count]);
+                    *offset += count;
+                    regs.eax = count as u32;
+                    return;
+                }
+                drop(process_stdin);
                 core::arch::asm!("sti");
                 output[0] = crate::drivers::keyboard::keyboard_getchar();
                 let mut count = 1;
@@ -451,12 +479,10 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             }
             let bytes = core::slice::from_raw_parts(address as *const u8, length);
             if fd == 1 || fd == 2 {
-                if let Ok(text) = core::str::from_utf8(bytes) {
-                    print!("{}", text);
-                    regs.eax = length as u32;
-                } else {
-                    regs.eax = u32::MAX;
+                for &byte in bytes {
+                    vga_putchar(byte);
                 }
+                regs.eax = length as u32;
                 return;
             }
             let mut files = OPEN_FILES.lock();
@@ -518,16 +544,22 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
                 return;
             };
-            regs.eax = if crate::fs::ramfs::ramfs_delete(path) { 0 } else { u32::MAX };
+            regs.eax = if crate::fs::ramfs::ramfs_delete(&path) { 0 } else { u32::MAX };
         }
         SYS_GETCWD => {
             let address = regs.ebx;
             let length = regs.ecx as usize;
-            if length < 2 || !user_range_is_valid(address, 2) || length > 4096 {
+            if length < 2 || length > 4096 || !user_range_is_valid(address, length) {
                 regs.eax = u32::MAX;
                 return;
             }
-            core::ptr::copy_nonoverlapping(b"/\0".as_ptr(), address as *mut u8, 2);
+            let path = crate::shell::current_directory_path();
+            if path.len() + 1 > length {
+                regs.eax = u32::MAX;
+                return;
+            }
+            core::ptr::copy_nonoverlapping(path.as_ptr(), address as *mut u8, path.len());
+            *((address as *mut u8).add(path.len())) = 0;
             regs.eax = address;
         }
         SYS_GETTIMEOFDAY => {
@@ -585,12 +617,6 @@ fn rtc_unix_seconds(datetime: crate::drivers::rtc::RtcDateTime) -> u64 {
         + datetime.second as u64
 }
 
-fn normalize_user_path(path: &str) -> Option<&str> {
-    let path = path.trim_start_matches('/');
-    let path = path.strip_prefix("./").unwrap_or(path);
-    if path.is_empty() || path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
-        None
-    } else {
-        Some(path)
-    }
+fn normalize_user_path(path: &str) -> Option<String> {
+    crate::shell::resolve_user_path(path)
 }

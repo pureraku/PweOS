@@ -100,6 +100,20 @@ fn current_directory() -> String {
     WORKING_DIRECTORY.lock().clone()
 }
 
+pub fn current_directory_path() -> String {
+    let directory = current_directory();
+    if directory.is_empty() {
+        String::from("/")
+    } else {
+        alloc::format!("/{}", directory)
+    }
+}
+
+pub fn resolve_user_path(path: &str) -> Option<String> {
+    let path = resolve_path(path);
+    (!path.is_empty()).then_some(path)
+}
+
 struct Command {
     name: &'static str,
     desc: &'static str,
@@ -116,11 +130,6 @@ static COMMANDS: &[Command] = &[
         name: "clear",
         desc: "Clear screen and reset cursor",
         handler: cmd_clear,
-    },
-    Command {
-        name: "echo",
-        desc: "Print arguments to the console",
-        handler: cmd_echo,
     },
     Command {
         name: "version",
@@ -188,11 +197,6 @@ static COMMANDS: &[Command] = &[
         handler: cmd_pwd,
     },
     Command {
-        name: "cat",
-        desc: "Display file or piped input: cat [filename]",
-        handler: cmd_cat,
-    },
-    Command {
         name: "exec",
         desc: "Run a static i386 ELF program: exec <path> [arguments...]",
         handler: cmd_exec,
@@ -218,11 +222,6 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cube,
     },
     Command {
-        name: "grep",
-        desc: "Search piped input or files: grep <text> [path...]",
-        handler: cmd_grep,
-    },
-    Command {
         name: "touch",
         desc: "Create empty file: touch <filename>",
         handler: cmd_touch,
@@ -238,11 +237,6 @@ static COMMANDS: &[Command] = &[
         handler: cmd_edit,
     },
     Command {
-        name: "vi",
-        desc: "vi-style editor: vi <path> (i insert, :w save, :q quit)",
-        handler: cmd_vi,
-    },
-    Command {
         name: "less",
         desc: "View a file or piped text: less [path] (q exits)",
         handler: cmd_less,
@@ -251,11 +245,6 @@ static COMMANDS: &[Command] = &[
         name: "rm",
         desc: "Delete file: rm <filename>",
         handler: cmd_rm,
-    },
-    Command {
-        name: "calc",
-        desc: "Evaluate arithmetic expression: a op b",
-        handler: cmd_calc,
     },
     Command {
         name: "color",
@@ -292,16 +281,7 @@ static COMMANDS: &[Command] = &[
         desc: "Information about PweOS system",
         handler: cmd_about,
     },
-    Command {
-        name: "whoami",
-        desc: "Prints user",
-        handler: cmd_whoami,
-    },
 ];
-
-fn cmd_whoami(_args: &[&str]){
-    println!("idk you tell me");
-}
 
 fn cmd_help(_args: &[&str]) {
     println!("\nPweOS Builtin Commands:");
@@ -317,6 +297,13 @@ fn cmd_help(_args: &[&str]) {
     println!("  image /images/billi.rgb332");
     println!("  video /videos/demo.pwevid");
     println!("  cube (press a key to return to the shell)");
+    println!("\nBundled User Programs:");
+    ramfs_list("bin", |name, _, is_directory| {
+        if !is_directory && name.ends_with(".elf") {
+            println!("  {}", &name[..name.len() - 4]);
+        }
+    });
+    println!("Run a program by name, or use exec <path> [arguments...].");
     println!("-----------------------:3----------------------------");
 }
 
@@ -423,13 +410,6 @@ fn smooth_sine(table: &[i32; 16], phase: u16) -> i32 {
     let current = table[index];
     let next = table[(index + 1) & 15];
     current + (next - current) * fraction / 64
-}
-
-fn cmd_echo(args: &[&str]) {
-    for (i, &arg) in args.iter().enumerate().skip(1) {
-        print!("{}{}", arg, if i == args.len() - 1 { "" } else { " " });
-    }
-    println!();
 }
 
 fn cmd_version(_args: &[&str]) {
@@ -556,6 +536,10 @@ fn cmd_nuke(args: &[&str]) {
         println!("nuke: refusing to remove the filesystem root or current working directory.");
         return;
     }
+    if path == "bin" || path == "videos" {
+        println!("nuke: cannot remove a mounted directory.");
+        return;
+    }
     if ramfs_nuke(&path) {
         println!("Removed '{}' and everything inside it.", path);
     } else {
@@ -575,48 +559,6 @@ fn cmd_cd(args: &[&str]) {
 fn cmd_pwd(_args: &[&str]) {
     let path = current_directory();
     println!("/{}", path);
-}
-
-fn cmd_cat(args: &[&str]) {
-    if args.len() < 2 {
-        if *PIPE_ACTIVE.lock() {
-            for byte in pipe_input() {
-                vga_putchar(byte);
-            }
-        } else {
-            println!("Usage: cat <filename>");
-        }
-        return;
-    }
-    let path = resolve_path(args[1]);
-    match ramfs_read(&path) {
-        Some(data) => {
-            if *PIPE_ACTIVE.lock() {
-                for &byte in &data {
-                    vga_putchar(byte);
-                }
-                return;
-            }
-            if let Ok(text) = core::str::from_utf8(&data) {
-                print!("{}", text);
-                if !data.ends_with(b"\n") {
-                    println!();
-                }
-            } else {
-                for &b in &data {
-                    vga_putchar(b);
-                }
-                if !data.ends_with(b"\n") {
-                    println!();
-                }
-            }
-        }
-        None => {
-            vga_set_color(VgaColor::LightRed, VgaColor::Black);
-            println!("Error: File '{}' not found.", args[1]);
-            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-        }
-    }
 }
 
 fn cmd_exec(args: &[&str]) {
@@ -665,60 +607,6 @@ fn cmd_tcc(args: &[&str]) {
             }
         }
         None => println!("tcc: compiler executable not found."),
-    }
-}
-
-fn cmd_grep(args: &[&str]) {
-    if args.len() < 2 {
-        println!("Usage: grep <text> [path...]");
-        return;
-    }
-    let needle = args[1].as_bytes();
-
-    if args.len() > 2 {
-        let multiple_files = args.len() > 3;
-        for &arg in args.iter().skip(2) {
-            let path = resolve_path(arg);
-            match ramfs_read(&path) {
-                Some(contents) => {
-                    grep_matching_lines(&contents, needle, if multiple_files { Some(path.as_str()) } else { None });
-                }
-                None => println!("grep: '{}' not found.", arg),
-            }
-        }
-    } else if *PIPE_ACTIVE.lock() {
-        grep_matching_lines(&pipe_input(), needle, None);
-    } else {
-        println!("Usage: grep <text> [path...] (or provide piped input)");
-    }
-}
-
-fn grep_matching_lines(input: &[u8], needle: &[u8], label: Option<&str>) {
-    let mut line_start = 0;
-    for index in 0..input.len() {
-        if input[index] == b'\n' {
-            let line = &input[line_start..=index];
-            if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
-                if let Some(label) = label {
-                    print!("{}:", label);
-                }
-                for &byte in line {
-                    vga_putchar(byte);
-                }
-            }
-            line_start = index + 1;
-        }
-    }
-    if line_start < input.len() {
-        let line = &input[line_start..];
-        if needle.is_empty() || line.windows(needle.len()).any(|window| window == needle) {
-            if let Some(label) = label {
-                print!("{}:", label);
-            }
-            for &byte in line {
-                vga_putchar(byte);
-            }
-        }
     }
 }
 
@@ -980,22 +868,6 @@ fn cmd_edit(args: &[&str]) {
     }
 }
 
-fn cmd_vi(args: &[&str]) {
-    if args.len() < 2 {
-        println!("Usage: vi <path>");
-        return;
-    }
-
-    let Some(image) = ramfs_read("bin/vi.elf") else {
-        println!("vi: user-mode editor executable not found.");
-        return;
-    };
-    match crate::process::run_elf(&image, &args[1..]) {
-        Ok(_) => {}
-        Err(error) => println!("vi: {}", error),
-    }
-}
-
 fn cmd_less(args: &[&str]) {
     if args.len() < 2 && !*PIPE_ACTIVE.lock() {
         println!("Usage: less <path>");
@@ -1063,100 +935,6 @@ fn cmd_meminfo(_args: &[&str]) {
     println!("----------------------------------------------------");
 }
 
-fn parse_i32(s: &str) -> Option<i32> {
-    let mut num: i32 = 0;
-    let mut negative = false;
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-
-    let mut i = 0;
-    if bytes[0] == b'-' {
-        negative = true;
-        i += 1;
-    } else if bytes[0] == b'+' {
-        i += 1;
-    }
-
-    if i >= bytes.len() {
-        return None;
-    }
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        num = num.wrapping_mul(10).wrapping_add((b - b'0') as i32);
-        i += 1;
-    }
-
-    Some(if negative { -num } else { num })
-}
-
-fn cmd_calc(args: &[&str]) {
-    if args.len() < 4 {
-        println!("Usage: calc <number> <+|-|*|/|%> <number>");
-        println!("Example: calc 15 * 7");
-        return;
-    }
-
-    let a = match parse_i32(args[1]) {
-        Some(v) => v,
-        None => {
-            println!("Invalid number '{}'", args[1]);
-            return;
-        }
-    };
-    let op = args[2];
-    let b = match parse_i32(args[3]) {
-        Some(v) => v,
-        None => {
-            println!("Invalid number '{}'", args[3]);
-            return;
-        }
-    };
-
-    match op {
-        "+" => {
-            let res = a.wrapping_add(b);
-            println!("{} + {} = {}", a, b, res);
-        }
-        "-" => {
-            let res = a.wrapping_sub(b);
-            println!("{} - {} = {}", a, b, res);
-        }
-        "*" => {
-            let res = a.wrapping_mul(b);
-            println!("{} * {} = {}", a, b, res);
-        }
-        "/" => {
-            if b == 0 {
-                vga_set_color(VgaColor::LightRed, VgaColor::Black);
-                println!("Error: Division by zero!");
-                vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-                return;
-            }
-            let res = a / b;
-            println!("{} / {} = {} (remainder {})", a, b, res, a % b);
-        }
-        "%" => {
-            if b == 0 {
-                vga_set_color(VgaColor::LightRed, VgaColor::Black);
-                println!("Error: Division by zero!");
-                vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-                return;
-            }
-            let res = a % b;
-            println!("{} % {} = {}", a, b, res);
-        }
-        _ => {
-            println!("Unknown operator '{}'. Supported: +, -, *, /, %", op);
-        }
-    }
-}
-
 fn parse_color_name(name: &str) -> Option<VgaColor> {
     match name {
         "black" => Some(VgaColor::Black),
@@ -1221,7 +999,7 @@ fn cmd_sleep(args: &[&str]) {
         println!("Usage: sleep <seconds>");
         return;
     }
-    let s = parse_i32(args[1]).unwrap_or(1);
+    let s = args[1].parse::<i32>().unwrap_or(1);
     let s = if s <= 0 { 1 } else { s };
     println!("Sleeping for {} second(s)... :3", s);
     timer_sleep((s as u32) * 100);
@@ -1437,11 +1215,14 @@ fn shell_complete_line(buffer: &mut [u8], index: usize, max_len: usize) -> usize
 
     if completing_command {
         let command_start = index.saturating_sub(stage.len());
-        let candidates: Vec<(String, bool)> = COMMANDS
+        let mut candidates: Vec<(String, bool)> = COMMANDS
             .iter()
             .filter(|command| command.name.starts_with(stage.as_str()))
             .map(|command| (String::from(command.name), false))
             .collect();
+        add_executable_completions("bin", &stage, &mut candidates);
+        let cwd = current_directory();
+        add_executable_completions(&cwd, &stage, &mut candidates);
         return finish_completion(
             buffer,
             index,
@@ -1551,6 +1332,26 @@ fn finish_completion(
     index
 }
 
+fn add_executable_completions(
+    directory: &str,
+    prefix: &str,
+    candidates: &mut Vec<(String, bool)>,
+) {
+    ramfs_list(directory, |name, _, is_directory| {
+        if is_directory {
+            return;
+        }
+        let Some(program_name) = name.strip_suffix(".elf") else {
+            return;
+        };
+        if program_name.starts_with(prefix)
+            && !candidates.iter().any(|(candidate, _)| candidate == program_name)
+        {
+            candidates.push((String::from(program_name), false));
+        }
+    });
+}
+
 fn common_candidate_prefix(candidates: &[(String, bool)]) -> &str {
     let Some((first, _)) = candidates.first() else {
         return "";
@@ -1613,12 +1414,21 @@ fn execute_pipeline(line: &str) -> bool {
                 input = vga_end_capture();
             }
         } else {
-            *PIPE_ACTIVE.lock() = false;
-            *PIPE_INPUT.lock() = Vec::new();
-            vga_set_color(VgaColor::LightRed, VgaColor::Black);
-            println!("Unknown command: '{}'. Type 'help' for command list.", args[0]);
-            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-            return true;
+            *PIPE_INPUT.lock() = input.clone();
+            *PIPE_ACTIVE.lock() = true;
+            vga_begin_capture();
+            let ran = run_external_program(&args, Some(&input));
+            let output = vga_end_capture();
+            if ran {
+                input = output;
+            } else {
+                *PIPE_ACTIVE.lock() = false;
+                *PIPE_INPUT.lock() = Vec::new();
+                vga_set_color(VgaColor::LightRed, VgaColor::Black);
+                println!("Unknown command: '{}'. Type 'help' for command list.", args[0]);
+                vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+                return true;
+            }
         }
     }
 
@@ -1662,16 +1472,9 @@ pub fn shell_run() -> ! {
             continue;
         }
 
-        let mut found = false;
-        for cmd in COMMANDS {
-            if cmd.name == args[0] {
-                (cmd.handler)(&args);
-                found = true;
-                break;
-            }
-        }
-
-        if !found {
+        if let Some(cmd) = COMMANDS.iter().find(|cmd| cmd.name == args[0]) {
+            (cmd.handler)(&args);
+        } else if !run_external_program(&args, None) {
             vga_set_color(VgaColor::LightRed, VgaColor::Black);
             println!(
                 "Unknown command: '{}'. Type 'help' for command list.",
@@ -1680,4 +1483,29 @@ pub fn shell_run() -> ! {
             vga_set_color(VgaColor::LightGrey, VgaColor::Black);
         }
     }
+}
+
+fn run_external_program(args: &[&str], stdin: Option<&[u8]>) -> bool {
+    let Some(command) = args.first() else {
+        return false;
+    };
+    let has_directory = command.contains('/');
+    let mut path = resolve_path(command);
+    let mut image = ramfs_read(&path);
+    if image.is_none() && !has_directory && !command.ends_with(".elf") {
+        path.push_str(".elf");
+        image = ramfs_read(&path);
+    }
+    if image.is_none() && !has_directory {
+        path = alloc::format!("bin/{}.elf", command.strip_suffix(".elf").unwrap_or(command));
+        image = ramfs_read(&path);
+    }
+    let Some(image) = image else {
+        return false;
+    };
+    match crate::process::run_elf_with_stdin(&image, args, stdin) {
+        Ok(_) => {}
+        Err(error) => println!("{}: {}", path, error),
+    }
+    true
 }

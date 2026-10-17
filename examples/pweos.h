@@ -19,6 +19,7 @@ enum {
     PWE_SYS_GETCWD = 9,
     PWE_SYS_GETTIMEOFDAY = 10,
     PWE_SYS_CONSOLE = 11,
+    PWE_SYS_ISATTY = 12,
 };
 
 enum {
@@ -107,6 +108,10 @@ static inline int pwe_console_clear(void) {
 
 static inline int pwe_console_set_cursor(unsigned int row, unsigned int column) {
     return pwe_syscall3(PWE_SYS_CONSOLE, PWE_CONSOLE_SET_CURSOR, row, column);
+}
+
+static inline int pwe_isatty(int fd) {
+    return pwe_syscall1(PWE_SYS_ISATTY, (unsigned int)fd);
 }
 
 static inline unsigned int pwe_brk(unsigned int address) {

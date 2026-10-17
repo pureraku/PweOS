@@ -1,4 +1,4 @@
-//! Polled primary-master ATA PIO reads for the companion video data disk.
+//! Polled primary-master ATA PIO reads for the companion data disk.
 
 use crate::arch::io::{inb, inw, io_wait, outb};
 
@@ -54,28 +54,28 @@ fn wait_not_busy() -> Result<(), &'static str> {
     for _ in 0..10_000_000 {
         let status = unsafe { inb(STATUS) };
         if status == 0 || status == 0xFF {
-            return Err("video data disk is not attached");
+            return Err("data disk is not attached");
         }
         if status & BUSY == 0 {
             if status & (ERROR | DEVICE_FAULT) != 0 {
-                return Err("video data disk reported an ATA error");
+            return Err("data disk reported an ATA error");
             }
             return Ok(());
         }
         core::hint::spin_loop();
     }
-    Err("timed out waiting for video data disk")
+    Err("timed out waiting for data disk")
 }
 
 fn wait_data_ready() -> Result<(), &'static str> {
     for _ in 0..10_000_000 {
         let status = unsafe { inb(STATUS) };
         if status == 0 || status == 0xFF {
-            return Err("video data disk is not attached");
+            return Err("data disk is not attached");
         }
         if status & BUSY == 0 {
             if status & (ERROR | DEVICE_FAULT) != 0 {
-                return Err("video data disk reported an ATA error");
+            return Err("data disk reported an ATA error");
             }
             if status & READY != 0 {
                 return Ok(());
@@ -83,5 +83,5 @@ fn wait_data_ready() -> Result<(), &'static str> {
         }
         core::hint::spin_loop();
     }
-    Err("timed out reading video data disk")
+    Err("timed out reading data disk")
 }

@@ -112,6 +112,7 @@ static int read_command(char *command, size_t capacity,
     for (;;) {
         draw(path, text, length, cursor, 0, 0, "", command);
         int key = getchar();
+        if (key == EOF) return 0;
         if (key == 27) return 0;
         if (key == '\n' || key == '\r') {
             command[count] = '\0';
@@ -127,12 +128,12 @@ static int read_command(char *command, size_t capacity,
 }
 
 int main(int argc, char **argv) {
-    if (argc < 1) {
+    if (argc < 2) {
         printf("Usage: vi <path>\n");
         return 1;
     }
 
-    const char *path = argv[0];
+    const char *path = argv[1];
     char *text = malloc(VI_MAX_BYTES + 1);
     if (!text) {
         printf("vi: not enough memory\n");
@@ -163,6 +164,11 @@ int main(int argc, char **argv) {
     for (;;) {
         draw(path, text, length, cursor, insert_mode, pending_delete, message, NULL);
         int key = getchar();
+        if (key == EOF) {
+            pwe_console_clear();
+            free(text);
+            return 1;
+        }
 
         if (insert_mode) {
             if (key == 27) {

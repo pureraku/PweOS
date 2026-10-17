@@ -55,6 +55,26 @@ fn main() {
     }
     generated.push_str("];\n");
 
+    let program_manifest = root.join("examples/user_programs.txt");
+    println!("cargo:rerun-if-changed={}", program_manifest.display());
+    generated.push_str("\npub static USER_PROGRAM_DISK: &[(&str, u32, u32)] = &[\n");
+    for program_name in fs::read_to_string(&program_manifest).unwrap().lines() {
+        let program_name = program_name.trim();
+        if program_name.is_empty() {
+            continue;
+        }
+        let name = format!("{program_name}.elf");
+        assert!(name.len() < 32, "user program filename is too long: {name}");
+        let program = root.join("build").join(&name);
+        println!("cargo:rerun-if-changed={}", program.display());
+        if program.exists() {
+            let size = fs::metadata(&program).unwrap().len() as u32;
+            generated.push_str(&format!("    ({:?}, {}, {}),\n", name, next_sector, size));
+            next_sector += size.div_ceil(512);
+        }
+    }
+    generated.push_str("];\n");
+
     let tcc_program = root.join("build/tcc.elf");
     println!("cargo:rerun-if-changed={}", tcc_program.display());
     let tcc_program_entry = if tcc_program.exists() {
@@ -68,23 +88,6 @@ fn main() {
 
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_images.rs");
     fs::write(output, generated).unwrap();
-
-    let programs_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_programs.rs");
-    let mut programs = String::from("pub static BUNDLED_PROGRAMS: &[(&str, &[u8])] = &[\n");
-    for name in ["hello.elf", "vi.elf"] {
-        let program = root.join("build").join(name);
-        println!("cargo:rerun-if-changed={}", program.display());
-        if program.exists() {
-            let program = program.canonicalize().unwrap();
-            programs.push_str(&format!(
-                "    ({:?}, include_bytes!({:?})),\n",
-                name,
-                program.to_string_lossy()
-            ));
-        }
-    }
-    programs.push_str("];\n");
-    fs::write(programs_output, programs).unwrap();
 
     let tcc_include = root.join("third_party/tinycc/include");
     println!("cargo:rerun-if-changed={}", tcc_include.display());
