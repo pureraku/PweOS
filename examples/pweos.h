@@ -18,6 +18,12 @@ enum {
     PWE_SYS_UNLINK = 8,
     PWE_SYS_GETCWD = 9,
     PWE_SYS_GETTIMEOFDAY = 10,
+    PWE_SYS_CONSOLE = 11,
+};
+
+enum {
+    PWE_CONSOLE_CLEAR = 0,
+    PWE_CONSOLE_SET_CURSOR = 1,
 };
 
 enum {
@@ -93,6 +99,14 @@ static inline char *pwe_getcwd(char *buffer, pwe_size_t length) {
 static inline int pwe_gettimeofday(void *timeval, void *timezone) {
     return pwe_syscall3(PWE_SYS_GETTIMEOFDAY, (unsigned int)timeval,
                         (unsigned int)timezone, 0);
+}
+
+static inline int pwe_console_clear(void) {
+    return pwe_syscall1(PWE_SYS_CONSOLE, PWE_CONSOLE_CLEAR);
+}
+
+static inline int pwe_console_set_cursor(unsigned int row, unsigned int column) {
+    return pwe_syscall3(PWE_SYS_CONSOLE, PWE_CONSOLE_SET_CURSOR, row, column);
 }
 
 static inline unsigned int pwe_brk(unsigned int address) {

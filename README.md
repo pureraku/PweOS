@@ -108,6 +108,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Interactive command interpreter with line editing and builtin commands.
 - Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides console write, exit, RAMFS read, and heap-break calls. `ring3test` exercises the temporary path.
 - Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
+- `vi <path>` launches the statically linked i386 editor from RAMFS as a user program. It supports basic vi-style movement, insert mode, line deletion, and `:w`, `:q`, `:q!`, and `:wq` commands.
 - TinyCC is available as the `tcc` shell command. It compiles C source files stored in RAMFS into static i386 ELF programs for `exec`; it is built into the companion disk image and loaded on demand.
 
 ### Compiling C programs with TinyCC

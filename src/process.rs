@@ -22,6 +22,9 @@ const SYS_LSEEK: u32 = 7;
 const SYS_UNLINK: u32 = 8;
 const SYS_GETCWD: u32 = 9;
 const SYS_GETTIMEOFDAY: u32 = 10;
+const SYS_CONSOLE: u32 = 11;
+const CONSOLE_CLEAR: u32 = 0;
+const CONSOLE_SET_CURSOR: u32 = 1;
 const OPEN_WRONLY: u32 = 0x0001;
 const OPEN_RDWR: u32 = 0x0002;
 const OPEN_CREATE: u32 = 0x0040;
@@ -355,6 +358,20 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 regs.eax = u32::MAX;
             }
         }
+        SYS_CONSOLE => match regs.ebx {
+            CONSOLE_CLEAR => {
+                crate::drivers::vga::vga_clear();
+                regs.eax = 0;
+            }
+            CONSOLE_SET_CURSOR
+                if (regs.ecx as usize) < crate::drivers::vga::VGA_HEIGHT
+                    && (regs.edx as usize) < crate::drivers::vga::VGA_WIDTH =>
+            {
+                crate::drivers::vga::vga_set_cursor_position(regs.ecx as usize, regs.edx as usize);
+                regs.eax = 0;
+            }
+            _ => regs.eax = u32::MAX,
+        },
         SYS_OPEN => {
             let mut path_bytes = [0u8; MAX_PATH_LENGTH];
             let Some(path_length) = user_read_c_string(regs.ebx, &mut path_bytes) else {

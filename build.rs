@@ -71,7 +71,7 @@ fn main() {
 
     let programs_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_programs.rs");
     let mut programs = String::from("pub static BUNDLED_PROGRAMS: &[(&str, &[u8])] = &[\n");
-    for name in ["hello.elf"] {
+    for name in ["hello.elf", "vi.elf"] {
         let program = root.join("build").join(name);
         println!("cargo:rerun-if-changed={}", program.display());
         if program.exists() {
