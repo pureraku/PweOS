@@ -10,6 +10,9 @@
 
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);
+double strtod(const char *text, char **end);
+float strtof(const char *text, char **end);
+long double strtold(const char *text, char **end);
 int atoi(const char *text);
 long atol(const char *text);
 int abs(int value);
