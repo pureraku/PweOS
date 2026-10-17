@@ -193,6 +193,16 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cat,
     },
     Command {
+        name: "exec",
+        desc: "Run a static i386 ELF program: exec <path> [arguments...]",
+        handler: cmd_exec,
+    },
+    Command {
+        name: "tcc",
+        desc: "Run TinyCC: tcc [options] [file.c]",
+        handler: cmd_tcc,
+    },
+    Command {
         name: "image",
         desc: "View RGB332 image: image <path>",
         handler: cmd_image,
@@ -206,6 +216,11 @@ static COMMANDS: &[Command] = &[
         name: "cube",
         desc: "Show a spinning wireframe cube",
         handler: cmd_cube,
+    },
+    Command {
+        name: "ring3test",
+        desc: "Run a ring-3 system-call and return-path check",
+        handler: cmd_ring3test,
     },
     Command {
         name: "grep",
@@ -400,6 +415,14 @@ fn cmd_cube(_args: &[&str]) {
     let _ = keyboard_getchar();
     framebuffer.leave();
     vga_clear();
+}
+
+fn cmd_ring3test(_args: &[&str]) {
+    println!("Starting a temporary ring-3 program...");
+    match crate::process::run_ring3_demo() {
+        Some(status) => println!("User program exited with status {}.", status),
+        None => println!("ring3test: another user program is already active."),
+    }
 }
 
 fn smooth_sine(table: &[i32; 16], phase: u16) -> i32 {
@@ -604,6 +627,55 @@ fn cmd_cat(args: &[&str]) {
     }
 }
 
+fn cmd_exec(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: exec <static i386 ELF path> [arguments...]");
+        return;
+    }
+    let path = resolve_path(args[1]);
+    match ramfs_read(&path) {
+        Some(image) => match crate::process::run_elf(&image, &args[1..]) {
+            Ok(status) => println!("Program exited with status {}.", status),
+            Err(error) => println!("exec: {}", error),
+        },
+        None => println!("exec: '{}' not found.", args[1]),
+    }
+}
+
+fn cmd_tcc(args: &[&str]) {
+    match ramfs_read("bin/tcc.elf") {
+        Some(image) => {
+            let mut tcc_args = Vec::with_capacity(args.len() + 5);
+            tcc_args.push("tcc");
+            let compile_only = args.iter().any(|arg| *arg == "-c");
+            let informational = args.iter().any(|arg| {
+                matches!(
+                    *arg,
+                    "-v" | "-vv" | "-vvv" | "-h" | "-hh" | "--help" | "--version" | "-print-search-dirs"
+                )
+            });
+            let link_executable = !compile_only && !informational;
+            if link_executable {
+                tcc_args.extend_from_slice(&[
+                    "-nostdlib",
+                    "-static",
+                    "-Wl,-Ttext=0x00400000",
+                    "-Wl,-e=_start",
+                ]);
+            }
+            tcc_args.extend_from_slice(args.get(1..).unwrap_or(&[]));
+            if link_executable {
+                tcc_args.push("/tcc/lib/pweos_runtime.o");
+            }
+            match crate::process::run_elf(&image, &tcc_args) {
+            Ok(status) => println!("TinyCC exited with status {}.", status),
+            Err(error) => println!("tcc: {}", error),
+            }
+        }
+        None => println!("tcc: compiler executable not found."),
+    }
+}
+
 fn cmd_grep(args: &[&str]) {
     if args.len() < 2 {
         println!("Usage: grep <text> [path...]");
@@ -672,17 +744,23 @@ fn cmd_touch(args: &[&str]) {
 }
 
 fn cmd_write(args: &[&str]) {
-    if args.len() < 2 || (args.len() < 3 && !*PIPE_ACTIVE.lock()) {
-        println!("Usage: write <filename> <text...>");
+    let mut append = false;
+    let mut file_idx = 1;
+    if args.len() >= 2 && args[1] == "-a" {
+        append = true;
+        file_idx = 2;
+    }
+    if args.len() <= file_idx || (args.len() == file_idx + 1 && !*PIPE_ACTIVE.lock()) {
+        println!("Usage: write [-a] <filename> <text...>");
         return;
     }
 
-    let content = if args.len() == 2 && *PIPE_ACTIVE.lock() {
+    let content = if args.len() == file_idx + 1 && *PIPE_ACTIVE.lock() {
         pipe_input()
     } else {
         let mut text = String::new();
-        for (i, &arg) in args.iter().enumerate().skip(2) {
-            if i > 2 {
+        for (i, &arg) in args.iter().enumerate().skip(file_idx + 1) {
+            if i > file_idx + 1 {
                 text.push(' ');
             }
             text.push_str(arg);
@@ -692,11 +770,11 @@ fn cmd_write(args: &[&str]) {
     };
 
     let len = content.len();
-    let path = resolve_path(args[1]);
-    if ramfs_write(&path, &content, false) {
+    let path = resolve_path(args[file_idx]);
+    if ramfs_write(&path, &content, append) {
         println!("Wrote {} bytes to '{}'. :3", len, path);
     } else {
-        println!("Failed to write to '{}'. :(", args[1]);
+        println!("Failed to write to '{}'. :(", args[file_idx]);
     }
 }
 

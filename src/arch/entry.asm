@@ -9,6 +9,7 @@ extern kmain
 
 section .text.entry
 _start:
+    cli
     ; Ensure segment registers and stack are set
     mov ax, 0x10
     mov ds, ax

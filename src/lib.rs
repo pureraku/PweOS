@@ -11,9 +11,12 @@ pub mod arch;
 pub mod drivers;
 pub mod fs;
 pub mod mm;
+pub mod process;
 pub mod shell;
 
+use arch::gdt::gdt_init;
 use arch::isr::isr_init;
+use arch::paging::paging_init;
 use core::panic::PanicInfo;
 use drivers::keyboard::keyboard_init;
 use drivers::timer::timer_init;
@@ -25,6 +28,8 @@ use shell::{shell_init, shell_run};
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
     vga_init();
+    gdt_init();
+    paging_init();
     isr_init();
     heap_init(HEAP_START_ADDR, HEAP_INITIAL_SIZE);
     ramfs_init();

@@ -85,7 +85,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 |  256-Entry IDT | 8259 PIC Remapper | ISR Stubs & Panic Dump  |
 +-------------------------------------------------------------+
 |                    32-bit Protected Mode                    |
-|   GDT (Flat 4GB Code & Data) | A20 Gate | Stack at 0x90000   |
+|   GDT (Flat 4GB Code & Data) | A20 Gate | Stack at 0x90000 |
 +-------------------------------------------------------------+
 |              Stage 1 BIOS Boot Sector (512 Bytes)           |
 |      Loads kernel sectors from floppy disk via BIOS INT 13h |
@@ -94,14 +94,14 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 
 ### 1. Bootloader (`boot/boot.asm`)
 - **Stage 1 MBR Boot Sector (512 bytes)** executed by BIOS at `0x7C00`.
-- Performs **LBA to CHS conversion** to load up to 448 KB of kernel data into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector.
+- Performs **LBA to CHS conversion** to load up to 448 KB of kernel data into physical memory starting at `0x10000` (`0x1000:0x0000`), advancing `ES` segment by `0x20` per sector. This keeps the kernel below the VGA memory window.
 - Enables the **A20 Address Line** via Fast A20 gate.
 - Loads a 32-bit **Global Descriptor Table (GDT)** defining flat 4GB code and data segments.
 - Transitions the processor from 16-bit Real Mode to **32-bit Protected Mode** (`CR0.PE = 1`) and jumps to kernel entry.
 
 ### 2. Kernel Entry & Linker (`src/arch/entry.asm`, `linker.ld`)
 - Sets up 32-bit data segment registers (`DS`, `ES`, `FS`, `GS`, `SS`).
-- Initializes a dedicated stack safely below video memory (`0x90000`).
+- Initializes a dedicated stack at `0x90000`, above the kernel load area.
 - Transfers control to Rust kernel entry point `kmain()`.
 
 ### 3. Dynamic Heap Memory Manager (`src/mm/heap.rs`)
@@ -119,6 +119,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
 - The `image <path>` command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. Paths can be absolute or relative to the current directory. Press Escape to restore text mode and clear the shell screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
 - The `video <path>` command plays 320x200 RGB332 clips from `/videos/`. PWEV files use periodic run-length keyframes plus changed-pixel delta frames. Video data lives on a separate raw IDE disk image, so it does not consume the kernel boot image's 448 KiB load limit. Press any key to return to the shell. Playback uses the shared framebuffer in `src/drivers/framebuffer.rs`.
+- The companion IDE disk also stores `/bin/tcc.elf`; PweOS reads it on demand so the compiler binary does not cross the VGA memory window during boot.
 - Includes `/videos/demo.pwevid`, a short moving color-block clip for trying the player immediately.
 - The `cube` command demonstrates the `Framebuffer` pixel and line API in `src/drivers/framebuffer.rs`. It continuously rotates a colored wireframe cube in the 320x200 RGB332 framebuffer; press any key to restore text mode and return to the shell.
 - Supports 16 foreground and 16 background colors.
@@ -143,7 +144,9 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Colored prompt (`pweos> `) with backspace character deletion.
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
 - **Tab Completion**: Complete command names and RAMFS file or directory paths. A unique match completes automatically; ambiguous matches extend to the shared prefix or show matching names.
-- Interactive command interpreter with line editing and 22 builtin commands.
+- Interactive command interpreter with line editing and builtin commands.
+- Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides console write, exit, RAMFS read, and heap-break calls. `ring3test` exercises the temporary path.
+- Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
 
 ---
 
@@ -167,9 +170,11 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
+| `exec` | `exec <path>` | Runs a static i386 ELF executable from RAMFS; try `exec /bin/hello.elf` |
 | `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
 | `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
+| `ring3test` | `ring3test` | Runs a temporary ring-3 program, prints through `int 0x80`, and returns to the shell |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
