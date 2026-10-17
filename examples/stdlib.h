@@ -14,6 +14,7 @@ void *realloc(void *pointer, size_t size);
 void free(void *pointer);
 void exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
+char *getenv(const char *name);
 
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);

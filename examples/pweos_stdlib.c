@@ -10,6 +10,11 @@ void abort(void) {
     pwe_exit(134);
 }
 
+char *getenv(const char *name) {
+    (void)name;
+    return (char *)0;
+}
+
 static unsigned int digit_value(int c) {
     if (c >= '0' && c <= '9') return (unsigned int)(c - '0');
     if (c >= 'a' && c <= 'z') return (unsigned int)(c - 'a' + 10);
