@@ -173,6 +173,7 @@ Program exited with status 0.
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
 | `edit` | `edit [path]` | Opens a multiline editor; Tab inserts four spaces, Escape saves, and piped text prompts for a save path |
+| `vi` | `vi <path>` | Opens a vi-style editor: `h/j/k/l` move, `i` inserts, `o/O` open lines, `x` and `dd` delete, `Esc` returns to normal mode, and `:w`, `:q`, `:q!`, `:wq` save or quit |
 | `less` | `less [path]` | Views a file or piped text without editing; arrows navigate and `q` or Escape exits |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |

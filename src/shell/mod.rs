@@ -243,6 +243,11 @@ static COMMANDS: &[Command] = &[
         handler: cmd_edit,
     },
     Command {
+        name: "vi",
+        desc: "vi-style editor: vi <path> (i insert, :w save, :q quit)",
+        handler: cmd_vi,
+    },
+    Command {
         name: "less",
         desc: "View a file or piped text: less [path] (q exits)",
         handler: cmd_less,
@@ -985,6 +990,343 @@ fn cmd_edit(args: &[&str]) {
             preferred_column = editor_cursor_line_column(&contents, cursor).1;
             editor_redraw(display_path, &contents, cursor, false);
         }
+    }
+}
+
+fn vi_redraw(
+    path: &str,
+    contents: &[u8],
+    cursor: usize,
+    insert_mode: bool,
+    pending_delete: bool,
+    command: Option<&str>,
+    message: &str,
+) {
+    const HEADER_ROWS: usize = 3;
+    const CONTENT_ROWS: usize = VGA_HEIGHT - HEADER_ROWS - 1;
+
+    vga_clear();
+    vga_set_color(VgaColor::LightCyan, VgaColor::Black);
+    println!("vi - {}", path);
+    vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+    if let Some(command) = command {
+        println!("COMMAND: :{}", command);
+    } else if insert_mode {
+        println!("-- INSERT --");
+    } else if pending_delete {
+        println!("NORMAL -- press d again to delete the line");
+    } else {
+        println!("NORMAL -- i insert | :w save | :q quit | :wq save and quit");
+    }
+    println!("----------------------------------------------------");
+
+    let (cursor_line, cursor_column) = editor_cursor_line_column(contents, cursor);
+    let first_line = cursor_line.saturating_sub(CONTENT_ROWS - 1);
+    let horizontal_offset = cursor_column.saturating_sub(VGA_WIDTH - 2);
+    for row in 0..CONTENT_ROWS {
+        let line = first_line + row;
+        let (start, end) = editor_line_bounds(contents, line);
+        let skip = if line == cursor_line { horizontal_offset } else { 0 };
+        for &byte in contents[start..end].iter().skip(skip).take(VGA_WIDTH - 1) {
+            if byte == b'\t' {
+                vga_putchar(b' ');
+            } else if (32..=126).contains(&byte) {
+                vga_putchar(byte);
+            } else {
+                vga_putchar(b'.');
+            }
+        }
+        if row + 1 < CONTENT_ROWS {
+            vga_putchar(b'\n');
+        }
+    }
+
+    vga_set_cursor_position(VGA_HEIGHT - 1, 0);
+    if let Some(command) = command {
+        print!(":{}", command);
+    } else {
+        print!("{}", message);
+    }
+    let screen_row = HEADER_ROWS + cursor_line - first_line;
+    let screen_column = cursor_column.saturating_sub(horizontal_offset);
+    vga_set_cursor_position(screen_row, screen_column);
+}
+
+fn cmd_vi(args: &[&str]) {
+    const VI_MAX_BYTES: usize = 4096;
+    if args.len() < 2 {
+        println!("Usage: vi <path>");
+        return;
+    }
+
+    let path = resolve_path(args[1]);
+    let mut contents = match ramfs_read(&path) {
+        Some(contents) => contents,
+        None => Vec::new(),
+    };
+    if contents.len() > VI_MAX_BYTES {
+        println!("vi: file exceeds the {} byte editor limit.", VI_MAX_BYTES);
+        return;
+    }
+
+    let mut cursor = 0usize;
+    let mut preferred_column = 0usize;
+    let mut insert_mode = false;
+    let mut insert_changed = false;
+    let mut pending_delete = false;
+    let mut dirty = false;
+    let mut message = String::from("NORMAL");
+
+    loop {
+        vi_redraw(
+            &path,
+            &contents,
+            cursor,
+            insert_mode,
+            pending_delete,
+            None,
+            if insert_mode { "-- INSERT --" } else { &message },
+        );
+        let key = keyboard_getchar();
+
+        if insert_mode {
+            match key {
+                27 => {
+                    insert_mode = false;
+                    if insert_changed && cursor > 0 {
+                        cursor -= 1;
+                    }
+                    insert_changed = false;
+                    cursor = vi_clamp_cursor(&contents, cursor);
+                    preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                    message = String::from("NORMAL");
+                }
+                KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN => {
+                    move_text_cursor(&contents, &mut cursor, &mut preferred_column, key);
+                }
+                b'\x08' => {
+                    if cursor > 0 {
+                        cursor -= 1;
+                        contents.remove(cursor);
+                        dirty = true;
+                        insert_changed = true;
+                        preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                    }
+                }
+                KEY_DELETE => {
+                    if cursor < contents.len() {
+                        contents.remove(cursor);
+                        dirty = true;
+                        insert_changed = true;
+                    }
+                }
+                b'\n' | b'\r' => {
+                    if contents.len() < VI_MAX_BYTES {
+                        contents.insert(cursor, b'\n');
+                        cursor += 1;
+                        dirty = true;
+                        insert_changed = true;
+                        preferred_column = 0;
+                    }
+                }
+                b'\t' => {
+                    if contents.len() + 4 <= VI_MAX_BYTES {
+                        for _ in 0..4 {
+                            contents.insert(cursor, b' ');
+                            cursor += 1;
+                        }
+                        dirty = true;
+                        insert_changed = true;
+                        preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                    }
+                }
+                byte if (32..=126).contains(&byte) && contents.len() < VI_MAX_BYTES => {
+                    contents.insert(cursor, byte);
+                    cursor += 1;
+                    dirty = true;
+                    insert_changed = true;
+                    preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        if pending_delete && key == b'd' {
+            let (line, _) = editor_cursor_line_column(&contents, cursor);
+            let (line_start, line_end) = editor_line_bounds(&contents, line);
+            let remove_start = if line_end == contents.len() && line_start > 0 {
+                line_start - 1
+            } else {
+                line_start
+            };
+            let remove_end = if line_end < contents.len() {
+                line_end + 1
+            } else {
+                line_end
+            };
+            if remove_start < remove_end {
+                contents.drain(remove_start..remove_end);
+                cursor = remove_start;
+                dirty = true;
+            }
+            pending_delete = false;
+            cursor = vi_clamp_cursor(&contents, cursor);
+            preferred_column = editor_cursor_line_column(&contents, cursor).1;
+            message = String::from("NORMAL");
+            continue;
+        }
+
+        if pending_delete {
+            message = String::from("NORMAL");
+        }
+        pending_delete = false;
+        match key {
+            b':' => {
+                let mut command = Vec::new();
+                let cancelled = loop {
+                    let command_text = core::str::from_utf8(&command).unwrap_or("");
+                    vi_redraw(&path, &contents, cursor, false, false, Some(command_text), "");
+                    match keyboard_getchar() {
+                        27 => break true,
+                        b'\n' | b'\r' => break false,
+                        b'\x08' if !command.is_empty() => {
+                            command.pop();
+                        }
+                        byte if (32..=126).contains(&byte) && command.len() < 32 => {
+                            command.push(byte);
+                        }
+                        _ => {}
+                    }
+                };
+                if cancelled {
+                    message = String::from("NORMAL");
+                    continue;
+                }
+
+                let command = core::str::from_utf8(&command).unwrap_or("");
+                match command {
+                    "w" => {
+                        if ramfs_write(&path, &contents, false) {
+                            dirty = false;
+                            message = String::from("written");
+                        } else {
+                            message = String::from("write failed");
+                        }
+                    }
+                    "q" if dirty => message = String::from("unsaved changes; use :q! to discard"),
+                    "q" | "q!" => {
+                        vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+                        vga_clear();
+                        return;
+                    }
+                    "wq" => {
+                        if ramfs_write(&path, &contents, false) {
+                            vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+                            vga_clear();
+                            return;
+                        }
+                        message = String::from("write failed");
+                    }
+                    _ => message = String::from("unknown command"),
+                }
+            }
+            b'd' => {
+                pending_delete = true;
+                message = String::from("press d again to delete the line");
+            }
+            b'i' => {
+                insert_mode = true;
+                insert_changed = false;
+            }
+            b'a' => {
+                let (_, line_end) = editor_line_bounds(
+                    &contents,
+                    editor_cursor_line_column(&contents, cursor).0,
+                );
+                if cursor < line_end {
+                    cursor += 1;
+                }
+                insert_mode = true;
+                insert_changed = false;
+            }
+            b'A' => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                cursor = editor_line_bounds(&contents, line).1;
+                insert_mode = true;
+                insert_changed = false;
+            }
+            b'o' | b'O' if contents.len() < VI_MAX_BYTES => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                let (line_start, line_end) = editor_line_bounds(&contents, line);
+                if key == b'o' {
+                    contents.insert(line_end, b'\n');
+                    cursor = line_end + 1;
+                } else {
+                    contents.insert(line_start, b'\n');
+                    cursor = line_start;
+                }
+                dirty = true;
+                insert_mode = true;
+                insert_changed = false;
+                preferred_column = 0;
+            }
+            b'x' => {
+                if cursor < contents.len() && contents[cursor] != b'\n' {
+                    contents.remove(cursor);
+                    dirty = true;
+                    cursor = vi_clamp_cursor(&contents, cursor);
+                }
+            }
+            b'0' => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                cursor = editor_line_bounds(&contents, line).0;
+                preferred_column = 0;
+            }
+            b'$' => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                let (line_start, line_end) = editor_line_bounds(&contents, line);
+                cursor = if line_end > line_start { line_end - 1 } else { line_end };
+                preferred_column = cursor - line_start;
+            }
+            b'h' | KEY_LEFT => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                let (line_start, _) = editor_line_bounds(&contents, line);
+                if cursor > line_start {
+                    cursor -= 1;
+                }
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+            }
+            b'l' | KEY_RIGHT => {
+                let (line, _) = editor_cursor_line_column(&contents, cursor);
+                let (_, line_end) = editor_line_bounds(&contents, line);
+                if cursor + 1 < line_end {
+                    cursor += 1;
+                }
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+            }
+            b'j' | b'k' | KEY_UP | KEY_DOWN => {
+                let movement = match key {
+                    b'j' => KEY_DOWN,
+                    b'k' => KEY_UP,
+                    _ => key,
+                };
+                move_text_cursor(&contents, &mut cursor, &mut preferred_column, movement);
+                cursor = vi_clamp_cursor(&contents, cursor);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn vi_clamp_cursor(contents: &[u8], cursor: usize) -> usize {
+    let cursor = cursor.min(contents.len());
+    let (line, _) = editor_cursor_line_column(contents, cursor);
+    let (line_start, line_end) = editor_line_bounds(contents, line);
+    if line_end > line_start {
+        cursor.min(line_end - 1)
+    } else {
+        line_end
     }
 }
 
