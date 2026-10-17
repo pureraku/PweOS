@@ -1188,6 +1188,13 @@ fn shell_readline(buffer: &mut [u8]) -> usize {
                     index -= 1;
                 }
             }
+        } else if c == 0x0C {
+            // Ctrl+L: clear screen and redraw prompt + current input
+            vga_clear();
+            shell_print_prompt();
+            for &b in &buffer[..index] {
+                vga_putchar(b);
+            }
         } else if (32..=126).contains(&c) && index + 1 < max_len {
             buffer[index] = c;
             index += 1;
