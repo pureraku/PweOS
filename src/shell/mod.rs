@@ -644,10 +644,34 @@ fn cmd_exec(args: &[&str]) {
 
 fn cmd_tcc(args: &[&str]) {
     match ramfs_read("bin/tcc.elf") {
-        Some(image) => match crate::process::run_elf(&image, args) {
+        Some(image) => {
+            let mut tcc_args = Vec::with_capacity(args.len() + 5);
+            tcc_args.push("tcc");
+            let compile_only = args.iter().any(|arg| *arg == "-c");
+            let informational = args.iter().any(|arg| {
+                matches!(
+                    *arg,
+                    "-v" | "-vv" | "-vvv" | "-h" | "-hh" | "--help" | "--version" | "-print-search-dirs"
+                )
+            });
+            let link_executable = !compile_only && !informational;
+            if link_executable {
+                tcc_args.extend_from_slice(&[
+                    "-nostdlib",
+                    "-static",
+                    "-Wl,-Ttext=0x00400000",
+                    "-Wl,-e=_start",
+                ]);
+            }
+            tcc_args.extend_from_slice(args.get(1..).unwrap_or(&[]));
+            if link_executable {
+                tcc_args.push("/tcc/lib/pweos_runtime.o");
+            }
+            match crate::process::run_elf(&image, &tcc_args) {
             Ok(status) => println!("TinyCC exited with status {}.", status),
             Err(error) => println!("tcc: {}", error),
-        },
+            }
+        }
         None => println!("tcc: compiler executable not found."),
     }
 }

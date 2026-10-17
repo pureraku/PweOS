@@ -415,7 +415,7 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let fd = regs.ebx as usize;
             let address = regs.ecx;
             let length = regs.edx as usize;
-            if length > 4096 || !user_range_is_valid(address, length) {
+            if length > 8192 || !user_range_is_valid(address, length) {
                 regs.eax = u32::MAX;
                 return;
             }

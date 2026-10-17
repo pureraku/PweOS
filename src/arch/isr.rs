@@ -136,7 +136,17 @@ pub unsafe extern "C" fn isr_handler(regs: *mut Registers) {
 
     if r.cs & 3 == 3 {
         let message = EXCEPTION_MESSAGES.get(int_no).copied().unwrap_or("Unknown Exception");
-        println!("User program fault: {} (vector {}, error 0x{:x})", message, int_no, r.err_code);
+        let fault_address = if int_no == 14 {
+            let address: u32;
+            core::arch::asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags));
+            address
+        } else {
+            0
+        };
+        println!(
+            "User program fault: {} at 0x{:08x} (address 0x{:08x}, vector {}, error 0x{:x})",
+            message, r.eip, fault_address, int_no, r.err_code
+        );
         crate::process::abort_current(-1);
     }
 

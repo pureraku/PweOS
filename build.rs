@@ -136,6 +136,15 @@ fn main() {
             runtime.to_string_lossy()
         ));
     }
+    let pweos_runtime = root.join("build/pweos_runtime.o");
+    println!("cargo:rerun-if-changed={}", pweos_runtime.display());
+    if pweos_runtime.exists() {
+        let runtime = pweos_runtime.canonicalize().unwrap();
+        tcc_files.push_str(&format!(
+            "    (\"tcc/lib/pweos_runtime.o\", include_bytes!({:?})),\n",
+            runtime.to_string_lossy()
+        ));
+    }
     tcc_files.push_str("];\n");
     let tcc_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_tcc.rs");
     fs::write(tcc_output, tcc_files).unwrap();

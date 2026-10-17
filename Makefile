@@ -40,6 +40,7 @@ TCC_ELF = $(BUILD)/tcc.elf
 TCC_SOURCES = $(wildcard third_party/tinycc/*.c third_party/tinycc/*.h third_party/tinycc/include/*.h examples/*.h examples/sys/*.h)
 TCC_RUNTIME_OBJS = $(BUILD)/tcc_libtcc1.o $(BUILD)/tcc_atomic.o $(BUILD)/tcc_builtin.o $(BUILD)/tcc_alloca.o $(BUILD)/tcc_pic86.o
 TCC_RUNTIME_OBJ = $(BUILD)/libtcc1.o
+PWEOS_RUNTIME_OBJ = $(BUILD)/pweos_runtime.o
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
@@ -97,6 +98,9 @@ $(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h exampl
 $(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
+$(PWEOS_RUNTIME_OBJ): $(USER_CRT_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) Makefile
+	$(LD) -m elf_i386 -r $(USER_CRT_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
+
 $(BUILD)/tcc_libtcc1.o: third_party/tinycc/lib/libtcc1.c third_party/tinycc/config.h Makefile | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fheinous-gnu-extensions -c $< -o $@
 
@@ -121,7 +125,7 @@ $(TCC_OBJ): third_party/tinycc/tcc.c $(TCC_SOURCES) Makefile | $(BUILD)
 $(TCC_ELF): $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld Makefile
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(TCC_ELF) $(TCC_RUNTIME_OBJ) build.rs Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(TCC_ELF) $(TCC_RUNTIME_OBJ) $(PWEOS_RUNTIME_OBJ) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(USER_OBJ) $(KERNEL_LIB)
