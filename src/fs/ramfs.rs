@@ -258,11 +258,30 @@ pub fn ramfs_nuke(path: &str) -> bool {
 }
 
 pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
-    RAMFS.lock().read(name)
+    let name = name.strip_prefix('/').unwrap_or(name);
+    if let Some(data) = RAMFS.lock().read(name) {
+        return Some(data);
+    }
+    if name != "bin/tcc.elf" {
+        return None;
+    }
+    let (start_sector, byte_len) = TCC_PROGRAM_DISK?;
+    let sector_count = (byte_len as usize).div_ceil(512);
+    let mut data = Vec::new();
+    data.try_reserve_exact(sector_count * 512).ok()?;
+    data.resize(sector_count * 512, 0);
+    crate::drivers::ata::read_sectors(start_sector, sector_count, &mut data).ok()?;
+    data.truncate(byte_len as usize);
+    Some(data)
 }
 
 pub fn ramfs_file_len(name: &str) -> Option<usize> {
-    RAMFS.lock().find(name).map(|node| node.data.len())
+    let name = name.strip_prefix('/').unwrap_or(name);
+    RAMFS
+        .lock()
+        .find(name)
+        .map(|node| node.data.len())
+        .or_else(|| (name == "bin/tcc.elf").then_some(TCC_PROGRAM_DISK?.1 as usize))
 }
 
 pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usize> {
@@ -289,7 +308,7 @@ pub fn ramfs_delete(name: &str) -> bool {
 }
 
 pub fn ramfs_count() -> usize {
-    RAMFS.lock().count() + VIDEO_FILES.len()
+    RAMFS.lock().count() + VIDEO_FILES.len() + usize::from(TCC_PROGRAM_DISK.is_some())
 }
 
 pub fn ramfs_is_dir(path: &str) -> bool {
@@ -298,7 +317,11 @@ pub fn ramfs_is_dir(path: &str) -> bool {
 
 pub fn ramfs_count_in(path: &str) -> usize {
     let count = RAMFS.lock().count_in(path);
-    if path == "videos" { count + VIDEO_FILES.len() } else { count }
+    match path {
+        "videos" => count + VIDEO_FILES.len(),
+        "bin" => count + usize::from(TCC_PROGRAM_DISK.is_some()),
+        _ => count,
+    }
 }
 
 pub fn ramfs_video_metadata(name: &str) -> Option<(u32, usize)> {
@@ -314,6 +337,11 @@ pub fn ramfs_list<F: FnMut(&str, usize, bool)>(path: &str, cb: F) {
     if path == "videos" {
         for &(name, _, size) in VIDEO_FILES {
             callback(name, size as usize, false);
+        }
+    }
+    if path == "bin" {
+        if let Some((_, size)) = TCC_PROGRAM_DISK {
+            callback("tcc.elf", size as usize, false);
         }
     }
 }

@@ -233,6 +233,15 @@ char *strchr(const char *text, int character) {
     return (char *)0;
 }
 
+char *strpbrk(const char *text, const char *accept) {
+    for (; *text; text++) {
+        for (const char *candidate = accept; *candidate; candidate++) {
+            if (*text == *candidate) return (char *)text;
+        }
+    }
+    return (char *)0;
+}
+
 char *strrchr(const char *text, int character) {
     char target = (char)character;
     const char *last = (const char *)0;

@@ -79,6 +79,64 @@ long strtol(const char *text, char **end, int base) {
     return (long)value;
 }
 
+static unsigned long long parse_unsigned_long_long(const char *text, char **end,
+                                                    int base, int *negative) {
+    const char *cursor = text;
+    while (isspace((unsigned char)*cursor)) cursor++;
+    *negative = 0;
+    if (*cursor == '+' || *cursor == '-') {
+        *negative = *cursor == '-';
+        cursor++;
+    }
+    if (base == 0) {
+        if (cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X')) {
+            base = 16;
+            cursor += 2;
+        } else if (cursor[0] == '0') {
+            base = 8;
+        } else {
+            base = 10;
+        }
+    } else if (base == 16 && cursor[0] == '0'
+               && (cursor[1] == 'x' || cursor[1] == 'X')) {
+        cursor += 2;
+    }
+
+    const char *digits = cursor;
+    unsigned long long value = 0;
+    unsigned long long limit = (unsigned long long)-1;
+    int overflow = 0;
+    for (;;) {
+        unsigned int digit = digit_value((unsigned char)*cursor);
+        if (digit >= (unsigned int)base) break;
+        if (value > (limit - digit) / (unsigned int)base) overflow = 1;
+        else if (!overflow) value = value * (unsigned int)base + digit;
+        cursor++;
+    }
+    if (cursor == digits) cursor = text;
+    if (end) *end = (char *)cursor;
+    return overflow ? limit : value;
+}
+
+unsigned long long strtoull(const char *text, char **end, int base) {
+    int negative;
+    unsigned long long value = parse_unsigned_long_long(text, end, base, &negative);
+    return negative ? 0ull - value : value;
+}
+
+long long strtoll(const char *text, char **end, int base) {
+    int negative;
+    unsigned long long value = parse_unsigned_long_long(text, end, base, &negative);
+    unsigned long long positive_limit = 0x7fffffffffffffffULL;
+    unsigned long long negative_limit = positive_limit + 1ULL;
+    if (negative) {
+        if (value >= negative_limit) return -9223372036854775807LL - 1;
+        return -(long long)value;
+    }
+    if (value > positive_limit) return (long long)positive_limit;
+    return (long long)value;
+}
+
 int atoi(const char *text) { return (int)strtol(text, (char **)0, 10); }
 long atol(const char *text) { return strtol(text, (char **)0, 10); }
 int abs(int value) { return value < 0 ? -value : value; }

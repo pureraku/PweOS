@@ -6,5 +6,6 @@
 
 void *memchr(const void *memory, int character, size_t length);
 size_t strnlen(const char *text, size_t maximum);
+char *strpbrk(const char *text, const char *accept);
 
 #endif

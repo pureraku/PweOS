@@ -17,6 +17,7 @@ char *strcpy(char *destination, const char *source);
 char *strncpy(char *destination, const char *source, pwe_size_t length);
 char *strcat(char *destination, const char *source);
 char *strchr(const char *text, int character);
+char *strpbrk(const char *text, const char *accept);
 char *strrchr(const char *text, int character);
 char *strstr(const char *text, const char *needle);
 char *strdup(const char *text);

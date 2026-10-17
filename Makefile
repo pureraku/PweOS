@@ -3,7 +3,6 @@ LD = ld.lld
 CARGO = cargo
 QEMU = qemu-system-i386
 CLANG ?= clang
-AR ?= ar
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -37,9 +36,9 @@ USER_MATH_OBJ = $(BUILD)/pweos_math.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
 TCC_OBJ = $(BUILD)/tcc.user.o
 TCC_ELF = $(BUILD)/tcc.elf
-TCC_SOURCES = $(wildcard third_party/tinycc/*.c third_party/tinycc/*.h third_party/tinycc/include/*.h)
-TCC_RUNTIME_OBJS = $(BUILD)/tcc_libtcc1.o $(BUILD)/tcc_stdatomic.o $(BUILD)/tcc_atomic.o $(BUILD)/tcc_builtin.o $(BUILD)/tcc_alloca.o $(BUILD)/tcc_alloca_bt.o $(BUILD)/tcc_pic86.o
-TCC_RUNTIME_LIB = $(BUILD)/libtcc1.a
+TCC_SOURCES = $(wildcard third_party/tinycc/*.c third_party/tinycc/*.h third_party/tinycc/include/*.h examples/*.h examples/sys/*.h)
+TCC_RUNTIME_OBJS = $(BUILD)/tcc_libtcc1.o $(BUILD)/tcc_atomic.o $(BUILD)/tcc_builtin.o $(BUILD)/tcc_alloca.o $(BUILD)/tcc_pic86.o
+TCC_RUNTIME_OBJ = $(BUILD)/libtcc1.o
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
@@ -94,14 +93,11 @@ $(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/time.h exam
 $(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h examples/ctype.h examples/errno.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) -o $@
+$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
 $(BUILD)/tcc_libtcc1.o: third_party/tinycc/lib/libtcc1.c third_party/tinycc/config.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
-
-$(BUILD)/tcc_stdatomic.o: third_party/tinycc/lib/stdatomic.c | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fheinous-gnu-extensions -c $< -o $@
 
 $(BUILD)/tcc_atomic.o: third_party/tinycc/lib/atomic.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
@@ -112,22 +108,19 @@ $(BUILD)/tcc_builtin.o: third_party/tinycc/lib/builtin.c | $(BUILD)
 $(BUILD)/tcc_alloca.o: third_party/tinycc/lib/alloca.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
 
-$(BUILD)/tcc_alloca_bt.o: third_party/tinycc/lib/alloca-bt.S | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
-
 $(BUILD)/tcc_pic86.o: third_party/tinycc/lib/pic86.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
 
-$(TCC_RUNTIME_LIB): $(TCC_RUNTIME_OBJS)
-	$(AR) rcs $@ $^
+$(TCC_RUNTIME_OBJ): $(TCC_RUNTIME_OBJS) Makefile
+	$(LD) -m elf_i386 -r $(TCC_RUNTIME_OBJS) -o $@
 
-$(TCC_OBJ): third_party/tinycc/tcc.c $(TCC_SOURCES) | $(BUILD)
+$(TCC_OBJ): third_party/tinycc/tcc.c $(TCC_SOURCES) Makefile | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -Ithird_party/tinycc/include -Ithird_party/tinycc -c $< -o $@
 
-$(TCC_ELF): $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_LIB) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_LIB) -o $@
+$(TCC_ELF): $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld Makefile
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(TCC_ELF) $(TCC_RUNTIME_LIB) build.rs Cargo.toml targets/i686-pweos.json
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) $(TCC_ELF) $(TCC_RUNTIME_OBJ) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
 $(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(USER_OBJ) $(KERNEL_LIB)
@@ -138,8 +131,8 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 	cat $(BOOT_BIN) $(KERNEL_BIN) > $(IMAGE)
 	truncate -s 1440K $(IMAGE)
 
-$(VIDEO_IMAGE): $(wildcard assets/*.pwevid) tools/pack_videos.py | $(BUILD)
-	python3 tools/pack_videos.py assets $(VIDEO_IMAGE)
+$(VIDEO_IMAGE): $(wildcard assets/*.pwevid) $(TCC_ELF) tools/pack_videos.py | $(BUILD)
+	python3 tools/pack_videos.py assets $(TCC_ELF) $(VIDEO_IMAGE)
 
 run: $(IMAGE) $(VIDEO_IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(VIDEO_DRIVE) $(QEMU_DISPLAY)
