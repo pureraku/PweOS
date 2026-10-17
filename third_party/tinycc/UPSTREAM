@@ -1,0 +1,9 @@
+Tiny C Compiler (TCC)
+Upstream: https://github.com/TinyCC/tinycc
+Revision: e23dabe
+
+This directory contains the i386 compiler sources, TCC runtime library, and
+headers from the upstream revision above. Tests, documentation, and other
+architecture backends are not included.
+
+See COPYING and RELICENSING for license information.
