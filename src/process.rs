@@ -21,6 +21,7 @@ const SYS_FWRITE: u32 = 6;
 const SYS_LSEEK: u32 = 7;
 const SYS_UNLINK: u32 = 8;
 const SYS_GETCWD: u32 = 9;
+const SYS_GETTIMEOFDAY: u32 = 10;
 const OPEN_WRONLY: u32 = 0x0001;
 const OPEN_RDWR: u32 = 0x0002;
 const OPEN_CREATE: u32 = 0x0040;
@@ -551,6 +552,18 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             core::ptr::copy_nonoverlapping(b"/\0".as_ptr(), address as *mut u8, 2);
             regs.eax = address;
         }
+        SYS_GETTIMEOFDAY => {
+            let address = regs.ebx;
+            if !user_range_is_valid(address, 8) {
+                regs.eax = u32::MAX;
+                return;
+            }
+            let now = crate::drivers::rtc::rtc_get_datetime();
+            let seconds = rtc_unix_seconds(now) as u32;
+            core::ptr::write_unaligned(address as *mut u32, seconds);
+            core::ptr::write_unaligned((address + 4) as *mut u32, 0);
+            regs.eax = 0;
+        }
         SYS_BRK => {
             let requested = regs.ebx as usize;
             unsafe {
@@ -566,6 +579,32 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
         }
         _ => regs.eax = u32::MAX,
     }
+}
+
+fn rtc_unix_seconds(datetime: crate::drivers::rtc::RtcDateTime) -> u64 {
+    let mut days = 0u64;
+    for year in 1970..datetime.year {
+        days += if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366
+        } else {
+            365
+        };
+    }
+    let month_lengths = [31u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for month in 1..datetime.month {
+        let mut length = month_lengths[(month - 1) as usize];
+        if month == 2 && datetime.year % 4 == 0
+            && (datetime.year % 100 != 0 || datetime.year % 400 == 0)
+        {
+            length += 1;
+        }
+        days += length;
+    }
+    days += datetime.day.saturating_sub(1) as u64;
+    days * 86_400
+        + datetime.hour as u64 * 3_600
+        + datetime.minute as u64 * 60
+        + datetime.second as u64
 }
 
 fn normalize_user_path(path: &str) -> Option<&str> {

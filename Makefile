@@ -31,6 +31,7 @@ USER_STDLIB_OBJ = $(BUILD)/pweos_stdlib.user.o
 USER_ERRNO_OBJ = $(BUILD)/pweos_errno.user.o
 USER_UNISTD_OBJ = $(BUILD)/pweos_unistd.user.o
 USER_SETJMP_OBJ = $(BUILD)/setjmp.user.o
+USER_TIME_OBJ = $(BUILD)/pweos_time.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
@@ -80,8 +81,11 @@ $(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h e
 $(USER_SETJMP_OBJ): examples/setjmp.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) -o $@
+$(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/pweos.h | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+
+$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) -o $@
 
 $(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release

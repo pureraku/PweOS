@@ -17,6 +17,7 @@ enum {
     PWE_SYS_LSEEK = 7,
     PWE_SYS_UNLINK = 8,
     PWE_SYS_GETCWD = 9,
+    PWE_SYS_GETTIMEOFDAY = 10,
 };
 
 enum {
@@ -87,6 +88,11 @@ static inline char *pwe_getcwd(char *buffer, pwe_size_t length) {
     unsigned int address = (unsigned int)buffer;
     int result = pwe_syscall3(PWE_SYS_GETCWD, address, length, 0);
     return result < 0 ? (char *)0 : (char *)address;
+}
+
+static inline int pwe_gettimeofday(void *timeval, void *timezone) {
+    return pwe_syscall3(PWE_SYS_GETTIMEOFDAY, (unsigned int)timeval,
+                        (unsigned int)timezone, 0);
 }
 
 static inline unsigned int pwe_brk(unsigned int address) {
