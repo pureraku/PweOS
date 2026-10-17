@@ -231,6 +231,21 @@ pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
     RAMFS.lock().read(name)
 }
 
+pub fn ramfs_file_len(name: &str) -> Option<usize> {
+    RAMFS.lock().find(name).map(|node| node.data.len())
+}
+
+pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usize> {
+    let fs = RAMFS.lock();
+    let node = fs.find(name)?;
+    if offset >= node.data.len() {
+        return Some(0);
+    }
+    let count = output.len().min(node.data.len() - offset);
+    output[..count].copy_from_slice(&node.data[offset..offset + count]);
+    Some(count)
+}
+
 pub fn ramfs_write(name: &str, data: &[u8], append: bool) -> bool {
     RAMFS.lock().write(name, data, append)
 }

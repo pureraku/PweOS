@@ -144,8 +144,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
 - **Tab Completion**: Complete command names and RAMFS file or directory paths. A unique match completes automatically; ambiguous matches extend to the shared prefix or show matching names.
 - Interactive command interpreter with line editing and builtin commands.
-- Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides minimal write/exit calls. `ring3test` exercises this temporary path.
-- Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs must be linked into the user arena and use the PweOS `int 0x80` calls; dynamic ELF files are not supported.
+- Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides console write, exit, RAMFS read, and heap-break calls. `ring3test` exercises the temporary path.
+- Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
 
 ---
 

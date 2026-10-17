@@ -1,16 +1,22 @@
 //! Temporary single-process user-mode execution support.
 //!
-//! This is the first runtime step for running freestanding C programs. User
-//! memory is a dedicated identity-mapped arena; a later ELF loader will replace
-//! the demonstration program used here.
+//! User memory is a dedicated identity-mapped arena. The runtime currently
+//! supports one active process and a small set of PweOS-specific syscalls.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::isr::Registers;
-use crate::arch::paging::{user_range_is_valid, USER_MEMORY_BASE, USER_MEMORY_END};
+use crate::arch::paging::{user_range_is_valid, user_read_c_string, USER_HEAP_BASE, USER_MEMORY_BASE, USER_MEMORY_END};
+use crate::sync::Spinlock;
 
 const SYS_EXIT: u32 = 0;
 const SYS_WRITE: u32 = 1;
+const SYS_OPEN: u32 = 2;
+const SYS_READ: u32 = 3;
+const SYS_CLOSE: u32 = 4;
+const SYS_BRK: u32 = 5;
 const ELF32_HEADER_SIZE: usize = 52;
 const ELF32_PROGRAM_HEADER_SIZE: usize = 32;
 const MAX_LOAD_SEGMENTS: usize = 16;
@@ -19,6 +25,16 @@ const USER_STACK_TOP: usize = USER_MEMORY_END - 16;
 const USER_STACK_BOTTOM: usize = USER_MEMORY_END - USER_STACK_SIZE;
 const DEMO_CODE_LEN: usize = 29;
 const DEMO_MESSAGE: &[u8] = b"Hello from ring 3!\n";
+const MAX_OPEN_FILES: usize = 8;
+const MAX_PATH_LENGTH: usize = 128;
+
+struct OpenFile {
+    path: String,
+    offset: usize,
+}
+
+static OPEN_FILES: Spinlock<Vec<Option<OpenFile>>> = Spinlock::new(Vec::new());
+static mut USER_PROGRAM_BREAK: usize = USER_HEAP_BASE;
 
 #[derive(Clone, Copy)]
 struct LoadSegment {
@@ -98,6 +114,7 @@ pub fn run_elf(image: &[u8]) -> Result<i32, &'static str> {
     }
 
     unsafe {
+        reset_process_resources();
         core::ptr::write_bytes(
             USER_MEMORY_BASE as *mut u8,
             0,
@@ -114,10 +131,18 @@ pub fn run_elf(image: &[u8]) -> Result<i32, &'static str> {
             );
         }
 
+        USER_PROGRAM_BREAK = USER_HEAP_BASE;
         let status = user_enter(entry as u32, USER_STACK_TOP as u32) as i32;
+        reset_process_resources();
         PROCESS_ACTIVE.store(false, Ordering::Release);
         Ok(status)
     }
+}
+
+fn reset_process_resources() {
+    let mut files = OPEN_FILES.lock();
+    files.clear();
+    files.resize_with(MAX_OPEN_FILES, || None);
 }
 
 fn parse_elf32(image: &[u8]) -> Result<(usize, [LoadSegment; MAX_LOAD_SEGMENTS], usize), &'static str> {
@@ -185,7 +210,7 @@ fn parse_elf32(image: &[u8]) -> Result<(usize, [LoadSegment; MAX_LOAD_SEGMENTS],
         }
         if segment.memory_size == 0
             || segment.address < USER_MEMORY_BASE
-            || memory_end > USER_STACK_BOTTOM
+            || memory_end > USER_HEAP_BASE
         {
             return Err("ELF segment is outside the user program area");
         }
@@ -242,6 +267,76 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
                 }
             } else {
                 regs.eax = u32::MAX;
+            }
+        }
+        SYS_OPEN => {
+            let mut path_bytes = [0u8; MAX_PATH_LENGTH];
+            let Some(path_length) = user_read_c_string(regs.ebx, &mut path_bytes) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            if regs.ecx != 0 || path_length == 0 {
+                regs.eax = u32::MAX;
+                return;
+            }
+            let Ok(path) = core::str::from_utf8(&path_bytes[..path_length]) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            if crate::fs::ramfs::ramfs_file_len(path).is_none() {
+                regs.eax = u32::MAX;
+                return;
+            }
+            let mut files = OPEN_FILES.lock();
+            if let Some((fd, slot)) = files.iter_mut().enumerate().skip(3).find(|(_, slot)| slot.is_none()) {
+                *slot = Some(OpenFile { path: String::from(path), offset: 0 });
+                regs.eax = fd as u32;
+            } else {
+                regs.eax = u32::MAX;
+            }
+        }
+        SYS_READ => {
+            let fd = regs.ebx as usize;
+            let address = regs.ecx;
+            let length = regs.edx as usize;
+            if length > 4096 || !user_range_is_valid(address, length) {
+                regs.eax = u32::MAX;
+                return;
+            }
+            let mut files = OPEN_FILES.lock();
+            let Some(Some(file)) = files.get_mut(fd) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            let buffer = core::slice::from_raw_parts_mut(address as *mut u8, length);
+            match crate::fs::ramfs::ramfs_read_at(&file.path, file.offset, buffer) {
+                Some(count) => {
+                    file.offset += count;
+                    regs.eax = count as u32;
+                }
+                None => regs.eax = u32::MAX,
+            }
+        }
+        SYS_CLOSE => {
+            let fd = regs.ebx as usize;
+            let mut files = OPEN_FILES.lock();
+            if fd >= 3 && fd < files.len() && files[fd].take().is_some() {
+                regs.eax = 0;
+            } else {
+                regs.eax = u32::MAX;
+            }
+        }
+        SYS_BRK => {
+            let requested = regs.ebx as usize;
+            unsafe {
+                if requested == 0 {
+                    regs.eax = USER_PROGRAM_BREAK as u32;
+                } else if requested >= USER_HEAP_BASE && requested <= USER_STACK_BOTTOM {
+                    USER_PROGRAM_BREAK = requested;
+                    regs.eax = USER_PROGRAM_BREAK as u32;
+                } else {
+                    regs.eax = u32::MAX;
+                }
             }
         }
         _ => regs.eax = u32::MAX,
