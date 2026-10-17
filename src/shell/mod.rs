@@ -744,17 +744,23 @@ fn cmd_touch(args: &[&str]) {
 }
 
 fn cmd_write(args: &[&str]) {
-    if args.len() < 2 || (args.len() < 3 && !*PIPE_ACTIVE.lock()) {
-        println!("Usage: write <filename> <text...>");
+    let mut append = false;
+    let mut file_idx = 1;
+    if args.len() >= 2 && args[1] == "-a" {
+        append = true;
+        file_idx = 2;
+    }
+    if args.len() <= file_idx || (args.len() == file_idx + 1 && !*PIPE_ACTIVE.lock()) {
+        println!("Usage: write [-a] <filename> <text...>");
         return;
     }
 
-    let content = if args.len() == 2 && *PIPE_ACTIVE.lock() {
+    let content = if args.len() == file_idx + 1 && *PIPE_ACTIVE.lock() {
         pipe_input()
     } else {
         let mut text = String::new();
-        for (i, &arg) in args.iter().enumerate().skip(2) {
-            if i > 2 {
+        for (i, &arg) in args.iter().enumerate().skip(file_idx + 1) {
+            if i > file_idx + 1 {
                 text.push(' ');
             }
             text.push_str(arg);
@@ -764,11 +770,11 @@ fn cmd_write(args: &[&str]) {
     };
 
     let len = content.len();
-    let path = resolve_path(args[1]);
-    if ramfs_write(&path, &content, false) {
+    let path = resolve_path(args[file_idx]);
+    if ramfs_write(&path, &content, append) {
         println!("Wrote {} bytes to '{}'. :3", len, path);
     } else {
-        println!("Failed to write to '{}'. :(", args[1]);
+        println!("Failed to write to '{}'. :(", args[file_idx]);
     }
 }
 

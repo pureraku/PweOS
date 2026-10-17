@@ -137,6 +137,7 @@ pub fn run_elf(image: &[u8], args: &[&str]) -> Result<i32, &'static str> {
             0,
             USER_STACK_BOTTOM - USER_MEMORY_BASE,
         );
+
         for segment in &segments[..segment_count] {
             let source = image.as_ptr().add(segment.offset);
             let destination = segment.address as *mut u8;
@@ -342,7 +343,7 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
         SYS_WRITE => {
             let address = regs.ebx;
             let length = regs.ecx as usize;
-            if length <= 4096 && user_range_is_valid(address, length) {
+            if user_range_is_valid(address, length) {
                 let bytes = core::slice::from_raw_parts(address as *const u8, length);
                 if let Ok(text) = core::str::from_utf8(bytes) {
                     print!("{}", text);
@@ -415,7 +416,7 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let fd = regs.ebx as usize;
             let address = regs.ecx;
             let length = regs.edx as usize;
-            if length > 8192 || !user_range_is_valid(address, length) {
+            if !user_range_is_valid(address, length) {
                 regs.eax = u32::MAX;
                 return;
             }
@@ -467,7 +468,7 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             let fd = regs.ebx as usize;
             let address = regs.ecx;
             let length = regs.edx as usize;
-            if length > 4096 || !user_range_is_valid(address, length) {
+            if !user_range_is_valid(address, length) {
                 regs.eax = u32::MAX;
                 return;
             }
