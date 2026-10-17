@@ -21,9 +21,9 @@ use core::panic::PanicInfo;
 use drivers::keyboard::keyboard_init;
 use drivers::timer::timer_init;
 use drivers::vga::{vga_init, vga_set_color, VgaColor, VGA_HEIGHT, VGA_WIDTH};
-use fs::ramfs::{ramfs_count, ramfs_init};
+use fs::ramfs::ramfs_init;
 use mm::heap::{heap_init, HEAP_INITIAL_SIZE, HEAP_START_ADDR};
-use shell::{shell_init, shell_run};
+use shell::{shell_init, shell_run, PWEOS_VERSION};
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
@@ -42,33 +42,21 @@ pub extern "C" fn kmain() -> ! {
     }
 
     vga_set_color(VgaColor::LightCyan, VgaColor::Black);
-    println!("================================================================================");
-    vga_set_color(VgaColor::LightGreen, VgaColor::Black);
-    println!("                      Welcome to PweOS (32-bit x86)                             ");
-    vga_set_color(VgaColor::LightCyan, VgaColor::Black);
-    println!("================================================================================\n");
+    println!("       ____              pweos@pweos");
+    println!("      |  _ \\             ----------------");
+    println!("      | |_) |            OS: PweOS {}", PWEOS_VERSION);
+    println!("      |  __/             Arch: i686");
+    println!("      |_|                Kernel: Rust (no_std)");
+    println!("                         Shell: PweOS");
+    println!("                         Display: VGA {}x{}", VGA_WIDTH, VGA_HEIGHT);
+    println!("                         Memory: {} KB heap", HEAP_INITIAL_SIZE / 1024);
+    println!("                         Filesystem: RAMFS");
+    println!("                         Compiler: TinyCC (i386)");
+    println!("                         CPU mode: 32-bit protected mode\n");
 
+    vga_set_color(VgaColor::LightGrey, VgaColor::Black);
+    println!("Type 'help' to see available commands.\n");
     vga_set_color(VgaColor::White, VgaColor::Black);
-    println!("[+] CPU: Intel 80386+ in 32-bit Protected Mode (IF=1 interrupts active)");
-    println!("[+] Memory: Flat model active (base: 0x0, limit: 4GB)");
-    println!(
-        "[+] Heap: Dynamic allocator initialized at 0x{:x} (size: {} KB)",
-        HEAP_START_ADDR,
-        HEAP_INITIAL_SIZE / 1024
-    );
-    println!(
-        "[+] RAMFS: In-memory filesystem initialized ({} default files mounted)",
-        ramfs_count()
-    );
-    println!("[+] IDT: 256 descriptor gates loaded, PIC remapped to vectors 0x20..0x2F");
-    println!("[+] PIT: Timer running at 100 Hz (IRQ0 active)");
-    println!("[+] Keyboard: PS/2 controller driver online (IRQ1 active)");
-    println!(
-        "[+] Console: VGA {}x{} text buffer at 0xb8000",
-        VGA_WIDTH, VGA_HEIGHT
-    );
-    println!("[+] Serial: COM1 active at port 0x3f8 (38400 baud, 8N1)\n");
-    println!("[+] Video storage: ATA primary-master PIO data disk\n");
 
     shell_init();
     shell_run();

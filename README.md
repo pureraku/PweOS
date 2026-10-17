@@ -2,59 +2,20 @@
 
 PweOS is a minimal, educational 32-bit x86 operating system featuring a custom BIOS bootloader, freestanding Rust kernel (`no_std`, `alloc`), dynamic heap memory allocator implementing Rust's `GlobalAlloc`, interrupt-driven device drivers, in-memory virtual filesystem, and an interactive command shell.
 
-```
-================================================================================
-                      Welcome to PweOS (32-bit x86)                             
-================================================================================
-
-[+] CPU: Intel 80386+ in 32-bit Protected Mode (IF=1 interrupts active)
-[+] Memory: Flat model active (base: 0x0, limit: 4GB)
-[+] Heap: Dynamic allocator initialized at 0x100000 (size: 2048 KB)
-[+] RAMFS: In-memory filesystem initialized (6 default files mounted)
-[+] IDT: 256 descriptor gates loaded, PIC remapped to vectors 0x20..0x2F
-[+] PIT: Timer running at 100 Hz (IRQ0 active)
-[+] Keyboard: PS/2 controller driver online (IRQ1 active)
-[+] Console: VGA 80x25 text buffer at 0xb8000
-[+] Serial: COM1 active at port 0x3f8 (38400 baud, 8N1)
+```text
+       ____              pweos@pweos
+      |  _ \             ----------------
+      | |_) |            OS: PweOS 0.1.0
+      |  __/             Arch: i686
+      |_|                Kernel: Rust (no_std)
+                         Shell: PweOS
+                         Display: VGA 80x25
+                         Memory: 2048 KB heap
+                         Filesystem: RAMFS
+                         Compiler: TinyCC (i386)
+                         CPU mode: 32-bit protected mode
 
 Type 'help' to see available commands.
-
-pweos> help
-
-PweOS Builtin Commands:
------------------------:3---------------------------
-  help       - Display list of available commands
-  clear      - Clear screen and reset cursor
-  echo       - Print arguments to the console
-  version    - Display PweOS kernel version and arch
-  uname      - Display operating system information
-  uptime     - Display system uptime and timer ticks
-  date       - Display real-time clock (CMOS RTC) date
-  cpuinfo    - Display CPU hardware details via CPUID
-  meminfo    - Display kernel heap memory statistics
-  history    - Display command history buffer
-  ls         - List files and directories in in-memory RAM filesystem
-  mkdir      - Create a directory: mkdir <name>
-  rmdir      - Remove an empty directory: rmdir <path>
-  nuke       - Recursively remove a file or directory tree: nuke <path>
-  cd         - Change directory: cd <path>
-  pwd        - Print the current working directory
-  cat        - Display file contents: cat <filename>
-  grep       - Search files or piped lines: grep <text> [path...]
-  touch      - Create empty file: touch <filename>
-  write      - Write one line: write <filename> <text>
-  edit       - Edit multiline files: edit <path> (Escape saves)
-  less       - Read files with arrow-key navigation: less <path>
-  rm         - Delete file: rm <filename>
-  calc       - Evaluate arithmetic expression: a op b
-  color      - Set terminal color: color <fg> [bg]
-  sleep      - Delay execution for N seconds
-  peek       - Read byte from memory: peek <hex_addr>
-  reboot     - Reboot the system
-  poweroff   - Power off the machine
-  panic      - Trigger kernel panic (exception test)
-  about      - Information about PweOS system
------------------------:3----------------------------
 pweos>
 ```
 
@@ -147,6 +108,38 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Interactive command interpreter with line editing and builtin commands.
 - Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides console write, exit, RAMFS read, and heap-break calls. `ring3test` exercises the temporary path.
 - Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
+- TinyCC is available as the `tcc` shell command. It compiles C source files stored in RAMFS into static i386 ELF programs for `exec`; it is built into the companion disk image and loaded on demand.
+
+### Compiling C programs with TinyCC
+
+Create a C source file with the shell editor, compile it, and run the resulting ELF:
+
+```text
+pweos> edit hello.c
+```
+
+Enter and save:
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    printf("Hello from PweOS!\n");
+    return 0;
+}
+```
+
+Then compile and execute it:
+
+```text
+pweos> tcc hello.c -o hello
+TinyCC exited with status 0.
+pweos> exec hello
+Hello from PweOS!
+Program exited with status 0.
+```
+
+`tcc -v` prints compiler information, and `tcc -c hello.c -o hello.o` creates an object file. Object files are not executable with `exec`; omit `-c` to link a runnable program. The shell supplies PweOS's startup code and runtime when linking. Programs must be static i386 ELF files and use the bundled PweOS C headers and runtime; host libraries and dynamic linking are not available.
 
 ---
 
@@ -171,6 +164,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
 | `exec` | `exec <path>` | Runs a static i386 ELF executable from RAMFS; try `exec /bin/hello.elf` |
+| `tcc` | `tcc [options] <file.c>` | Compiles C source in RAMFS to a static i386 ELF; e.g. `tcc hello.c -o hello`, then `exec hello` |
 | `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
 | `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
