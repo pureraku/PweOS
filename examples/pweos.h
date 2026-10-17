@@ -1,6 +1,8 @@
 #ifndef PWEOS_H
 #define PWEOS_H
 
+#include "errno.h"
+
 typedef unsigned int pwe_size_t;
 typedef int pwe_ssize_t;
 
@@ -34,12 +36,16 @@ enum {
 
 static inline int pwe_syscall0(unsigned int number) {
     __asm__ volatile ("int $0x80" : "+a"(number) : : "memory");
-    return (int)number;
+    int result = (int)number;
+    if (result < 0) errno = EIO;
+    return result;
 }
 
 static inline int pwe_syscall1(unsigned int number, unsigned int arg1) {
     __asm__ volatile ("int $0x80" : "+a"(number) : "b"(arg1) : "memory");
-    return (int)number;
+    int result = (int)number;
+    if (result < 0) errno = EIO;
+    return result;
 }
 
 static inline int pwe_syscall3(unsigned int number, unsigned int arg1,
@@ -47,7 +53,9 @@ static inline int pwe_syscall3(unsigned int number, unsigned int arg1,
     __asm__ volatile ("int $0x80" : "+a"(number)
                       : "b"(arg1), "c"(arg2), "d"(arg3)
                       : "memory");
-    return (int)number;
+    int result = (int)number;
+    if (result < 0) errno = EIO;
+    return result;
 }
 
 static inline pwe_ssize_t pwe_write(int fd, const void *buffer, pwe_size_t length) {

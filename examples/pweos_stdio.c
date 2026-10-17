@@ -1,4 +1,5 @@
 #include "stdio.h"
+#include "errno.h"
 #include "pweos_libc.h"
 
 static FILE standard_input = {0, 1, 0, 0, 0, 0, -1};
@@ -220,7 +221,8 @@ int remove(const char *path) { return pwe_unlink(path); }
 
 void perror(const char *prefix) {
     if (prefix && *prefix) { fputs(prefix, stderr); fputs(": ", stderr); }
-    fputs("operation failed\n", stderr);
+    fputs(strerror(errno), stderr);
+    fputc('\n', stderr);
 }
 
 typedef struct format_state {
