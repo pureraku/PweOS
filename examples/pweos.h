@@ -12,6 +12,7 @@ enum {
     PWE_SYS_CLOSE = 4,
     PWE_SYS_BRK = 5,
     PWE_SYS_FWRITE = 6,
+    PWE_SYS_LSEEK = 7,
 };
 
 enum {
@@ -21,6 +22,12 @@ enum {
     PWE_O_CREAT = 0x0040,
     PWE_O_TRUNC = 0x0200,
     PWE_O_APPEND = 0x0400,
+};
+
+enum {
+    PWE_SEEK_SET = 0,
+    PWE_SEEK_CUR = 1,
+    PWE_SEEK_END = 2,
 };
 
 static inline int pwe_syscall0(unsigned int number) {
@@ -55,6 +62,11 @@ static inline pwe_ssize_t pwe_read(int fd, void *buffer, pwe_size_t length) {
 
 static inline int pwe_close(int fd) {
     return pwe_syscall1(PWE_SYS_CLOSE, (unsigned int)fd);
+}
+
+static inline int pwe_lseek(int fd, int offset, int whence) {
+    return pwe_syscall3(PWE_SYS_LSEEK, (unsigned int)fd,
+                        (unsigned int)offset, (unsigned int)whence);
 }
 
 static inline unsigned int pwe_brk(unsigned int address) {

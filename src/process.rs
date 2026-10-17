@@ -18,6 +18,7 @@ const SYS_READ: u32 = 3;
 const SYS_CLOSE: u32 = 4;
 const SYS_BRK: u32 = 5;
 const SYS_FWRITE: u32 = 6;
+const SYS_LSEEK: u32 = 7;
 const OPEN_WRONLY: u32 = 0x0001;
 const OPEN_RDWR: u32 = 0x0002;
 const OPEN_CREATE: u32 = 0x0040;
@@ -403,6 +404,32 @@ pub unsafe extern "C" fn syscall_handler(regs: *mut Registers) {
             } else {
                 regs.eax = u32::MAX;
             }
+        }
+        SYS_LSEEK => {
+            let fd = regs.ebx as usize;
+            let delta = regs.ecx as i32 as i64;
+            let whence = regs.edx;
+            let mut files = OPEN_FILES.lock();
+            let Some(Some(file)) = files.get_mut(fd) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            let base = match whence {
+                0 => Some(0i64),
+                1 => i64::try_from(file.offset).ok(),
+                2 => crate::fs::ramfs::ramfs_file_len(&file.path).and_then(|len| i64::try_from(len).ok()),
+                _ => None,
+            };
+            let Some(position) = base.and_then(|base| base.checked_add(delta)) else {
+                regs.eax = u32::MAX;
+                return;
+            };
+            if position < 0 || position > u32::MAX as i64 {
+                regs.eax = u32::MAX;
+                return;
+            }
+            file.offset = position as usize;
+            regs.eax = position as u32;
         }
         SYS_BRK => {
             let requested = regs.ebx as usize;
