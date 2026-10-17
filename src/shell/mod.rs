@@ -894,6 +894,7 @@ fn cmd_edit(args: &[&str]) {
     }
 
     const EDITOR_MAX_BYTES: usize = 4096;
+    const EDITOR_TAB_WIDTH: usize = 4;
     let path = if args.len() >= 2 { Some(resolve_path(args[1])) } else { None };
     let mut contents = if *PIPE_ACTIVE.lock() {
         pipe_input()
@@ -959,6 +960,15 @@ fn cmd_edit(args: &[&str]) {
         } else if key == KEY_DELETE {
             if cursor < contents.len() {
                 contents.remove(cursor);
+                preferred_column = editor_cursor_line_column(&contents, cursor).1;
+                editor_redraw(display_path, &contents, cursor, false);
+            }
+        } else if key == b'\t' {
+            if contents.len() + EDITOR_TAB_WIDTH <= EDITOR_MAX_BYTES {
+                for _ in 0..EDITOR_TAB_WIDTH {
+                    contents.insert(cursor, b' ');
+                    cursor += 1;
+                }
                 preferred_column = editor_cursor_line_column(&contents, cursor).1;
                 editor_redraw(display_path, &contents, cursor, false);
             }

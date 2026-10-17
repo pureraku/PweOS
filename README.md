@@ -172,7 +172,7 @@ Program exited with status 0.
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
-| `edit` | `edit [path]` | Opens a multiline editor; accepts piped text, and prompts for a save path when none was given |
+| `edit` | `edit [path]` | Opens a multiline editor; Tab inserts four spaces, Escape saves, and piped text prompts for a save path |
 | `less` | `less [path]` | Views a file or piped text without editing; arrows navigate and `q` or Escape exits |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |
