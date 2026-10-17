@@ -95,6 +95,26 @@ fn main() {
             header.to_string_lossy()
         ));
     }
+
+    let pweos_include = root.join("examples");
+    println!("cargo:rerun-if-changed={}", pweos_include.display());
+    let mut pweos_headers = Vec::new();
+    collect_headers(&pweos_include, &mut pweos_headers);
+    pweos_headers.sort();
+    for header in pweos_headers {
+        let relative = header.strip_prefix(&pweos_include).unwrap();
+        let install_path = format!("tcc/include/{}", relative.to_string_lossy());
+        assert!(
+            install_path.split('/').all(|part| part.len() < 32),
+            "PweOS header path is too long for RAMFS: {install_path}"
+        );
+        let header = header.canonicalize().unwrap();
+        tcc_files.push_str(&format!(
+            "    ({:?}, include_bytes!({:?})),\n",
+            install_path,
+            header.to_string_lossy()
+        ));
+    }
     if tcc_runtime.exists() {
         let runtime = tcc_runtime.canonicalize().unwrap();
         tcc_files.push_str(&format!(
@@ -105,4 +125,18 @@ fn main() {
     tcc_files.push_str("];\n");
     let tcc_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_tcc.rs");
     fs::write(tcc_output, tcc_files).unwrap();
+}
+
+fn collect_headers(directory: &std::path::Path, headers: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory)
+        .expect("PweOS include directory must exist")
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_headers(&path, headers);
+        } else if path.extension().is_some_and(|extension| extension == "h") {
+            headers.push(path);
+        }
+    }
 }

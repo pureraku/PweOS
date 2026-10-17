@@ -234,6 +234,7 @@ pub fn ramfs_init() {
 
     fs.create_dir("tcc");
     fs.create_dir("tcc/include");
+    fs.create_dir("tcc/include/sys");
     fs.create_dir("tcc/lib");
     for &(path, data) in BUNDLED_TCC_FILES {
         fs.create(path, data);
