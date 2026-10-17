@@ -15,6 +15,7 @@ void free(void *pointer);
 void exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
 char *getenv(const char *name);
+char *realpath(const char *path, char *resolved_path);
 
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);

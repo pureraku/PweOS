@@ -79,7 +79,7 @@ $(USER_STDLIB_OBJ): examples/pweos_stdlib.c examples/stdlib.h examples/ctype.h e
 $(USER_ERRNO_OBJ): examples/pweos_errno.c examples/errno.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h examples/pweos.h | $(BUILD)
+$(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h examples/stdio.h examples/stdlib.h examples/string.h examples/errno.h examples/pweos.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_SETJMP_OBJ): examples/setjmp.asm | $(BUILD)
