@@ -79,6 +79,7 @@ extern "C" {
     fn irq4();  fn irq5();  fn irq6();  fn irq7();
     fn irq8();  fn irq9();  fn irq10(); fn irq11();
     fn irq12(); fn irq13(); fn irq14(); fn irq15();
+    fn syscall_stub();
 }
 
 pub fn isr_install_handler(n: u8, handler: IsrHandler) {
@@ -117,6 +118,9 @@ pub fn isr_init() {
         idt_set_gate(32 + i, *stub as *const () as u32, 0x08, 0x8E);
     }
 
+    // DPL 3 allows user programs to invoke the system call gate with int 0x80.
+    idt_set_gate(0x80, syscall_stub as *const () as u32, 0x08, 0xEE);
+
     // Mask all IRQs until specific drivers unmask them
     unsafe {
         outb(PIC1_DATA, 0xFF);
@@ -129,6 +133,12 @@ pub fn isr_init() {
 pub unsafe extern "C" fn isr_handler(regs: *mut Registers) {
     let r = &mut *regs;
     let int_no = r.int_no as usize;
+
+    if r.cs & 3 == 3 {
+        let message = EXCEPTION_MESSAGES.get(int_no).copied().unwrap_or("Unknown Exception");
+        println!("User program fault: {} (vector {}, error 0x{:x})", message, int_no, r.err_code);
+        crate::process::abort_current(-1);
+    }
 
     if int_no < 256 {
         let handler = INTERRUPT_HANDLERS.lock()[int_no];

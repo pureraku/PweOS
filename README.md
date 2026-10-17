@@ -143,7 +143,9 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Colored prompt (`pweos> `) with backspace character deletion.
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
 - **Tab Completion**: Complete command names and RAMFS file or directory paths. A unique match completes automatically; ambiguous matches extend to the shared prefix or show matching names.
-- Interactive command interpreter with line editing and 22 builtin commands.
+- Interactive command interpreter with line editing and builtin commands.
+- Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides minimal write/exit calls. `ring3test` exercises this temporary path.
+- Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs must be linked into the user arena and use the PweOS `int 0x80` calls; dynamic ELF files are not supported.
 
 ---
 
@@ -167,9 +169,11 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat <filename>` | Displays the contents of a file |
+| `exec` | `exec <path>` | Runs a static i386 ELF executable from RAMFS; try `exec /bin/hello.elf` |
 | `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
 | `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
+| `ring3test` | `ring3test` | Runs a temporary ring-3 program, prints through `int 0x80`, and returns to the shell |
 | `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |

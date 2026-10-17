@@ -167,6 +167,7 @@ fn base_name(path: &str) -> &str {
 static RAMFS: Spinlock<Ramfs> = Spinlock::new(Ramfs::new());
 
 include!(concat!(env!("OUT_DIR"), "/bundled_images.rs"));
+include!(concat!(env!("OUT_DIR"), "/bundled_programs.rs"));
 
 pub fn ramfs_init() {
     let mut fs = RAMFS.lock();
@@ -201,6 +202,13 @@ pub fn ramfs_init() {
     }
 
     fs.create_dir("videos");
+
+    fs.create_dir("bin");
+    for &(name, data) in BUNDLED_PROGRAMS {
+        let mut path = String::from("bin/");
+        path.push_str(name);
+        fs.create(&path, data);
+    }
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {

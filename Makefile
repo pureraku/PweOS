@@ -2,6 +2,7 @@ ASM = nasm
 LD = ld.lld
 CARGO = cargo
 QEMU = qemu-system-i386
+CLANG ?= clang
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -21,6 +22,9 @@ VIDEO_DRIVE = -drive file=$(VIDEO_IMAGE),format=raw,if=ide,index=0
 
 ENTRY_OBJ = $(BUILD)/entry.asm.o
 ISR_OBJ = $(BUILD)/isr.asm.o
+USER_OBJ = $(BUILD)/user.asm.o
+USER_HELLO_OBJ = $(BUILD)/hello.user.o
+USER_HELLO_ELF = $(BUILD)/hello.elf
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
@@ -42,10 +46,19 @@ $(ENTRY_OBJ): src/arch/entry.asm | $(BUILD)
 $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) build.rs Cargo.toml targets/i686-pweos.json
+$(USER_OBJ): src/arch/user.asm | $(BUILD)
+	$(ASM) $< -f elf32 -o $@
+
+$(USER_HELLO_OBJ): examples/hello.c | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+
+$(USER_HELLO_ELF): $(USER_HELLO_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $< -o $@
+
+$(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
 
-$(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(KERNEL_LIB)
+$(KERNEL_BIN): $(ENTRY_OBJ) $(ISR_OBJ) $(USER_OBJ) $(KERNEL_LIB)
 	$(LD) $(LDFLAGS) $^ -o $@
 	test "$$(wc -c < $@)" -le 458752
 

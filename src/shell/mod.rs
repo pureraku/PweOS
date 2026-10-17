@@ -193,6 +193,11 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cat,
     },
     Command {
+        name: "exec",
+        desc: "Run a static i386 ELF program: exec <path>",
+        handler: cmd_exec,
+    },
+    Command {
         name: "image",
         desc: "View RGB332 image: image <path>",
         handler: cmd_image,
@@ -206,6 +211,11 @@ static COMMANDS: &[Command] = &[
         name: "cube",
         desc: "Show a spinning wireframe cube",
         handler: cmd_cube,
+    },
+    Command {
+        name: "ring3test",
+        desc: "Run a ring-3 system-call and return-path check",
+        handler: cmd_ring3test,
     },
     Command {
         name: "grep",
@@ -400,6 +410,14 @@ fn cmd_cube(_args: &[&str]) {
     let _ = keyboard_getchar();
     framebuffer.leave();
     vga_clear();
+}
+
+fn cmd_ring3test(_args: &[&str]) {
+    println!("Starting a temporary ring-3 program...");
+    match crate::process::run_ring3_demo() {
+        Some(status) => println!("User program exited with status {}.", status),
+        None => println!("ring3test: another user program is already active."),
+    }
 }
 
 fn smooth_sine(table: &[i32; 16], phase: u16) -> i32 {
@@ -601,6 +619,21 @@ fn cmd_cat(args: &[&str]) {
             println!("Error: File '{}' not found.", args[1]);
             vga_set_color(VgaColor::LightGrey, VgaColor::Black);
         }
+    }
+}
+
+fn cmd_exec(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: exec <static i386 ELF path>");
+        return;
+    }
+    let path = resolve_path(args[1]);
+    match ramfs_read(&path) {
+        Some(image) => match crate::process::run_elf(&image) {
+            Ok(status) => println!("Program exited with status {}.", status),
+            Err(error) => println!("exec: {}", error),
+        },
+        None => println!("exec: '{}' not found.", args[1]),
     }
 }
 

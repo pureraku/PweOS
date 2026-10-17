@@ -57,4 +57,18 @@ fn main() {
 
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_images.rs");
     fs::write(output, generated).unwrap();
+
+    let program = root.join("build/hello.elf");
+    println!("cargo:rerun-if-changed={}", program.display());
+    let programs_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("bundled_programs.rs");
+    let programs = if program.exists() {
+        let program = program.canonicalize().unwrap();
+        format!(
+            "pub static BUNDLED_PROGRAMS: &[(&str, &[u8])] = &[(\"hello.elf\", include_bytes!({:?}))];\n",
+            program.to_string_lossy()
+        )
+    } else {
+        String::from("pub static BUNDLED_PROGRAMS: &[(&str, &[u8])] = &[];\n")
+    };
+    fs::write(programs_output, programs).unwrap();
 }
