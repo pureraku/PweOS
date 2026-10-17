@@ -8,6 +8,13 @@
 #define EXIT_FAILURE 1
 #define RAND_MAX 32767
 
+void *malloc(size_t size);
+void *calloc(size_t count, size_t size);
+void *realloc(void *pointer, size_t size);
+void free(void *pointer);
+void exit(int status) __attribute__((noreturn));
+void abort(void) __attribute__((noreturn));
+
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);
 double strtod(const char *text, char **end);
