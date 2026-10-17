@@ -198,6 +198,11 @@ static COMMANDS: &[Command] = &[
         handler: cmd_exec,
     },
     Command {
+        name: "tcc",
+        desc: "Run TinyCC: tcc [options] [file.c]",
+        handler: cmd_tcc,
+    },
+    Command {
         name: "image",
         desc: "View RGB332 image: image <path>",
         handler: cmd_image,
@@ -634,6 +639,16 @@ fn cmd_exec(args: &[&str]) {
             Err(error) => println!("exec: {}", error),
         },
         None => println!("exec: '{}' not found.", args[1]),
+    }
+}
+
+fn cmd_tcc(args: &[&str]) {
+    match ramfs_read("bin/tcc.elf") {
+        Some(image) => match crate::process::run_elf(&image, args) {
+            Ok(status) => println!("TinyCC exited with status {}.", status),
+            Err(error) => println!("tcc: {}", error),
+        },
+        None => println!("tcc: compiler executable not found."),
     }
 }
 

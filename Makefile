@@ -3,6 +3,7 @@ LD = ld.lld
 CARGO = cargo
 QEMU = qemu-system-i386
 CLANG ?= clang
+USER_ARCH_FLAGS = -march=i386 -mno-sse -mno-sse2 -mno-mmx -fno-vectorize -fno-slp-vectorize
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -63,47 +64,47 @@ $(ISR_OBJ): src/arch/isr.asm | $(BUILD)
 $(USER_OBJ): src/arch/user.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_HELLO_OBJ): examples/hello.c examples/stdio.h examples/pweos.h examples/pweos_libc.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_HELLO_OBJ): examples/hello.c examples/stdio.h examples/pweos.h examples/pweos_libc.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_CRT_OBJ): examples/crt0.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
 
-$(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/string.h examples/pweos.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_RUNTIME_OBJ): examples/pweos_libc.c examples/pweos_libc.h examples/string.h examples/pweos.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_STDIO_OBJ): examples/pweos_stdio.c examples/stdio.h examples/pweos_libc.h examples/pweos.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_STDIO_OBJ): examples/pweos_stdio.c examples/stdio.h examples/pweos_libc.h examples/pweos.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_STDLIB_OBJ): examples/pweos_stdlib.c examples/stdlib.h examples/ctype.h examples/pweos_libc.h examples/pweos.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_STDLIB_OBJ): examples/pweos_stdlib.c examples/stdlib.h examples/ctype.h examples/pweos_libc.h examples/pweos.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_ERRNO_OBJ): examples/pweos_errno.c examples/errno.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_ERRNO_OBJ): examples/pweos_errno.c examples/errno.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h examples/stdio.h examples/stdlib.h examples/string.h examples/errno.h examples/pweos.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h examples/stdio.h examples/stdlib.h examples/string.h examples/errno.h examples/pweos.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_SETJMP_OBJ): examples/setjmp.asm | $(BUILD)
 	$(ASM) $< -f elf32 -o $@
 
-$(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/time.h examples/pweos.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_TIME_OBJ): examples/pweos_time.c examples/sys/time.h examples/time.h examples/pweos.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h examples/ctype.h examples/errno.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+$(USER_MATH_OBJ): examples/pweos_math.c examples/math.h examples/stdlib.h examples/ctype.h examples/errno.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
 $(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
 
-$(BUILD)/tcc_libtcc1.o: third_party/tinycc/lib/libtcc1.c third_party/tinycc/config.h | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fheinous-gnu-extensions -c $< -o $@
+$(BUILD)/tcc_libtcc1.o: third_party/tinycc/lib/libtcc1.c third_party/tinycc/config.h Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fheinous-gnu-extensions -c $< -o $@
 
 $(BUILD)/tcc_atomic.o: third_party/tinycc/lib/atomic.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
 
-$(BUILD)/tcc_builtin.o: third_party/tinycc/lib/builtin.c | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
+$(BUILD)/tcc_builtin.o: third_party/tinycc/lib/builtin.c Makefile | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -c $< -o $@
 
 $(BUILD)/tcc_alloca.o: third_party/tinycc/lib/alloca.S | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -c $< -o $@
@@ -115,7 +116,7 @@ $(TCC_RUNTIME_OBJ): $(TCC_RUNTIME_OBJS) Makefile
 	$(LD) -m elf_i386 -r $(TCC_RUNTIME_OBJS) -o $@
 
 $(TCC_OBJ): third_party/tinycc/tcc.c $(TCC_SOURCES) Makefile | $(BUILD)
-	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -Ithird_party/tinycc/include -Ithird_party/tinycc -c $< -o $@
+	$(CLANG) --target=i386-unknown-none-elf -m32 $(USER_ARCH_FLAGS) -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -Ithird_party/tinycc/include -Ithird_party/tinycc -c $< -o $@
 
 $(TCC_ELF): $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) examples/user.ld Makefile
 	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(TCC_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) $(USER_SETJMP_OBJ) $(USER_TIME_OBJ) $(USER_MATH_OBJ) $(TCC_RUNTIME_OBJ) -o $@
