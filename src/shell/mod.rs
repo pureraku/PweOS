@@ -218,11 +218,6 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cube,
     },
     Command {
-        name: "ring3test",
-        desc: "Run a ring-3 system-call and return-path check",
-        handler: cmd_ring3test,
-    },
-    Command {
         name: "grep",
         desc: "Search piped input or files: grep <text> [path...]",
         handler: cmd_grep,
@@ -420,14 +415,6 @@ fn cmd_cube(_args: &[&str]) {
     let _ = keyboard_getchar();
     framebuffer.leave();
     vga_clear();
-}
-
-fn cmd_ring3test(_args: &[&str]) {
-    println!("Starting a temporary ring-3 program...");
-    match crate::process::run_ring3_demo() {
-        Some(status) => println!("User program exited with status {}.", status),
-        None => println!("ring3test: another user program is already active."),
-    }
 }
 
 fn smooth_sine(table: &[i32; 16], phase: u16) -> i32 {

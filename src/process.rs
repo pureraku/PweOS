@@ -37,8 +37,6 @@ const MAX_LOAD_SEGMENTS: usize = 16;
 const USER_STACK_SIZE: usize = 64 * 1024;
 const USER_STACK_TOP: usize = USER_MEMORY_END - 16;
 const USER_STACK_BOTTOM: usize = USER_MEMORY_END - USER_STACK_SIZE;
-const DEMO_CODE_LEN: usize = 29;
-const DEMO_MESSAGE: &[u8] = b"Hello from ring 3!\n";
 const MAX_OPEN_FILES: usize = 32;
 const MAX_PATH_LENGTH: usize = 128;
 const MAX_PROCESS_ARGS: usize = 32;
@@ -86,44 +84,6 @@ pub static mut USER_RETURN_EFLAGS: u32 = 0;
 extern "C" {
     fn user_enter(entry: u32, stack: u32) -> u32;
     fn user_leave(status: u32) -> !;
-}
-
-pub fn run_ring3_demo() -> Option<i32> {
-    if PROCESS_ACTIVE.swap(true, Ordering::AcqRel) {
-        return None;
-    }
-
-    let message_address = USER_MEMORY_BASE + DEMO_CODE_LEN;
-    let mut code = [0u8; DEMO_CODE_LEN];
-    code[0] = 0xb8; // mov eax, SYS_WRITE
-    code[1..5].copy_from_slice(&SYS_WRITE.to_le_bytes());
-    code[5] = 0xbb; // mov ebx, message pointer
-    code[6..10].copy_from_slice(&(message_address as u32).to_le_bytes());
-    code[10] = 0xb9; // mov ecx, message length
-    code[11..15].copy_from_slice(&(DEMO_MESSAGE.len() as u32).to_le_bytes());
-    code[15..17].copy_from_slice(&[0xcd, 0x80]); // int 0x80
-    code[17] = 0xb8; // mov eax, SYS_EXIT
-    code[18..22].copy_from_slice(&SYS_EXIT.to_le_bytes());
-    code[22] = 0xbb; // mov ebx, exit status 0
-    code[23..27].copy_from_slice(&0u32.to_le_bytes());
-    code[27..29].copy_from_slice(&[0xcd, 0x80]); // int 0x80
-
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            code.as_ptr(),
-            USER_MEMORY_BASE as *mut u8,
-            code.len(),
-        );
-        core::ptr::copy_nonoverlapping(
-            DEMO_MESSAGE.as_ptr(),
-            message_address as *mut u8,
-            DEMO_MESSAGE.len(),
-        );
-
-        let status = user_enter(USER_MEMORY_BASE as u32, (USER_MEMORY_END - 16) as u32) as i32;
-        PROCESS_ACTIVE.store(false, Ordering::Release);
-        Some(status)
-    }
 }
 
 pub fn run_elf(image: &[u8], args: &[&str]) -> Result<i32, &'static str> {
