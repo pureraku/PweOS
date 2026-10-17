@@ -1,0 +1,18 @@
+#ifndef PWEOS_TCC_CONFIG_H
+#define PWEOS_TCC_CONFIG_H
+
+#define TCC_VERSION "0.9.28rc"
+#define TCC_TARGET_I386
+#define CONFIG_SYSROOT ""
+#define CONFIG_TCCDIR "/tcc"
+#define CONFIG_TCC_CRTPREFIX ""
+#define CONFIG_TCC_SYSINCLUDEPATHS "{B}/include"
+#define CONFIG_TCC_LIBPATHS "{B}/lib"
+#define CONFIG_TCC_ELFINTERP "-"
+#define CONFIG_TCC_STATIC
+#define CONFIG_TCC_PREDEFS 0
+#define CONFIG_TCC_BACKTRACE 0
+#define CONFIG_TCC_BCHECK 0
+#define CONFIG_TCC_SEMLOCK 0
+
+#endif
