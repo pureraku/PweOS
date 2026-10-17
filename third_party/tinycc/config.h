@@ -5,6 +5,7 @@
 #define TCC_TARGET_I386
 #define CONFIG_SYSROOT ""
 #define CONFIG_TCCDIR "/tcc"
+#define CONFIG_TCC_PWEOS
 #define CONFIG_TCC_CRTPREFIX ""
 #define CONFIG_TCC_SYSINCLUDEPATHS "{B}/include"
 #define CONFIG_TCC_LIBPATHS "{B}/lib"

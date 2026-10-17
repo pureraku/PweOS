@@ -485,7 +485,16 @@ the_end:
 
 /* re-execute the i386/x86_64 cross-compilers with tcc -m32/-m64: */
 
-#if !defined TCC_TARGET_I386 && !defined TCC_TARGET_X86_64
+#if defined(CONFIG_TCC_PWEOS)
+
+ST_FUNC int tcc_tool_cross(char **argv, int option)
+{
+    (void)argv;
+    fprintf(stderr, "tcc: -m%d cross-compilation is not supported\n", option);
+    return 1;
+}
+
+#elif !defined TCC_TARGET_I386 && !defined TCC_TARGET_X86_64
 
 ST_FUNC int tcc_tool_cross(char **argv, int option)
 {
