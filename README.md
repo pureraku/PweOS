@@ -79,8 +79,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
 - The `image <path>` command uses 320x200 VGA graphics mode with a 256-color RGB332 palette, showing one source pixel per screen pixel. Paths can be absolute or relative to the current directory. Press Escape to restore text mode and clear the shell screen. Image rendering lives in `src/shell/image.rs` and VGA mode/palette handling lives in `src/drivers/vga.rs`.
-- The `video <path>` command plays 320x200 RGB332 clips from `/videos/`. PWEV files use periodic run-length keyframes plus changed-pixel delta frames. Video data lives on a separate raw IDE disk image, so it does not consume the kernel boot image's 448 KiB load limit. Press any key to return to the shell. Playback uses the shared framebuffer in `src/drivers/framebuffer.rs`.
-- The companion IDE disk also stores `/bin/tcc.elf`; PweOS reads it on demand so the compiler binary does not cross the VGA memory window during boot.
+- The `video <path>` command plays 320x200 RGB332 clips from `/videos/`. PWEV files use periodic run-length keyframes plus changed-pixel delta frames. Video data lives on the companion IDE data disk, so it does not consume the kernel boot image's 448 KiB load limit. Press any key to return to the shell. Playback uses the shared framebuffer in `src/drivers/framebuffer.rs`.
+- The companion IDE disk stores the static ELF programs under `/bin` and the TinyCC compiler. RAMFS exposes them as read-only files and loads their bytes on demand, keeping executable images out of the boot kernel.
 - Includes `/videos/demo.pwevid`, a short moving color-block clip for trying the player immediately.
 - The `cube` command demonstrates the `Framebuffer` pixel and line API in `src/drivers/framebuffer.rs`. It continuously rotates a colored wireframe cube in the 320x200 RGB332 framebuffer; press any key to restore text mode and return to the shell.
 - Supports 16 foreground and 16 background colors.
@@ -98,17 +98,17 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **PIT 8253 Timer (`timer.rs`)**: Channel 0 timer running at 100 Hz on IRQ0, tracking system ticks, elapsed uptime, and supporting `timer_sleep()`.
 - **PS/2 Keyboard (`keyboard.rs`)**: Decodes Scancode Set 1 on IRQ1 with extended key prefix `0xE0` support for arrow keys (Up, Down, Left, Right). Handles Shift and Caps Lock, buffers keystrokes in a thread-safe ring buffer, and supports headless ANSI serial input from COM1.
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
-- **ATA PIO (`ata.rs`)**: Reads video assets from the companion primary-master IDE disk without loading large video files into the kernel image.
+- **ATA PIO (`ata.rs`)**: Reads video assets and user programs from the companion primary-master IDE disk without loading them into the kernel image.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
 
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
 - **Command History**: Remembers up to 16 previous commands. Press **Up Arrow** and **Down Arrow** to cycle through history!
 - **Tab Completion**: Complete command names and RAMFS file or directory paths. A unique match completes automatically; ambiguous matches extend to the shared prefix or show matching names.
-- Interactive command interpreter with line editing and builtin commands.
+- Interactive command interpreter with line editing, builtin commands, and static i386 ELF programs.
 - Initial user-mode runtime: identity paging separates a 4 MiB-and-above user arena from kernel memory, a ring-3 GDT/TSS path enters user code, and `int 0x80` provides console, process, RAMFS, and heap calls.
-- Static i386 ELF execution: `exec /bin/hello.elf` runs a small freestanding C program packaged in RAMFS. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
-- `vi <path>` launches the statically linked i386 editor from RAMFS as a user program. It supports basic vi-style movement, insert mode, line deletion, and `:w`, `:q`, `:q!`, and `:wq` commands.
+- Static i386 ELF execution: bundled programs can be run by name from `/bin` (for example, `hello`, `calc 2 + 3`, or `vi notes.txt`). The shell also runs a file from the current directory, adding `.elf` when needed. `exec <path> [arguments...]` runs an ELF at an explicit path. Programs can use the syscall wrappers in `examples/pweos.h`; ELF files must be static and linked into the user arena. Dynamic ELF files are not supported.
+- Bundled user programs include `hello`, `echo`, `calc`, `cat`, `grep`, and `vi`. The editor supports basic vi-style movement, insert mode, line deletion, and `:w`, `:q`, `:q!`, and `:wq` commands.
 - TinyCC is available as the `tcc` shell command. It compiles C source files stored in RAMFS into static i386 ELF programs for `exec`; it is built into the companion disk image and loaded on demand.
 
 ### Compiling C programs with TinyCC
@@ -135,9 +135,8 @@ Then compile and execute it:
 ```text
 pweos> tcc hello.c -o hello
 TinyCC exited with status 0.
-pweos> exec hello
+pweos> hello
 Hello from PweOS!
-Program exited with status 0.
 ```
 
 `tcc -v` prints compiler information, and `tcc -c hello.c -o hello.o` creates an object file. Object files are not executable with `exec`; omit `-c` to link a runnable program. The shell supplies PweOS's startup code and runtime when linking. Programs must be static i386 ELF files and use the bundled PweOS C headers and runtime; host libraries and dynamic linking are not available.
@@ -150,7 +149,7 @@ Program exited with status 0.
 |---|---|---|
 | `help` | `help` | Lists all available commands and their descriptions |
 | `clear` | `clear` | Clears the VGA text screen and resets cursor position |
-| `echo` | `echo [text...]` | Prints the arguments to standard output |
+| `echo` | `echo [text...]` | Prints the arguments to standard output; bundled user program |
 | `version` / `uname` | `version` | Displays OS name, version, and target architecture |
 | `uptime` | `uptime` | Displays uptime in minutes and seconds, along with timer ticks |
 | `date` | `date` | Reads and displays current CMOS Real-Time Clock date and time |
@@ -160,23 +159,24 @@ Program exited with status 0.
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |
 | `mkdir` | `mkdir <path>` | Creates a directory under an existing parent directory |
 | `rmdir` | `rmdir <path>` | Removes an empty directory |
-| `nuke` | `nuke <path>` | Recursively removes a file or directory and its contents; protects the filesystem root and current working directory |
+| `nuke` | `nuke <path>` | Recursively removes a file or directory and its contents; protects the root, current directory, and mounted `/bin` and `/videos` directories |
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
-| `cat` | `cat <filename>` | Displays the contents of a file |
-| `exec` | `exec <path>` | Runs a static i386 ELF executable from RAMFS; try `exec /bin/hello.elf` |
-| `tcc` | `tcc [options] <file.c>` | Compiles C source in RAMFS to a static i386 ELF; e.g. `tcc hello.c -o hello`, then `exec hello` |
+| `cat` | `cat [file...]` | Writes file contents or piped input to standard output; bundled user program |
+| `exec` | `exec <path> [arguments...]` | Runs a static i386 ELF executable from RAMFS, including disk-backed `/bin` files |
+| `hello` | `hello [arguments...]` | Example user program, bundled as a static i386 ELF |
+| `tcc` | `tcc [options] <file.c>` | Compiles C source in RAMFS to a static i386 ELF; e.g. `tcc hello.c -o hello`, then run it with `hello` |
 | `image` | `image <path>` | Displays a 320x200 RGB332 file at 256 colors; e.g. `image /images/cat.rgb332` or `image billi.rgb332` from `/images/` |
 | `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
-| `grep` | `grep <text> [path...]` | Prints matching lines from files or piped input |
+| `grep` | `grep <text> [file...]` | Prints matching lines from files or piped input; bundled user program |
 | `touch` | `touch <filename>` | Creates an empty file in RAMFS |
 | `write` | `write <filename> <text>` | Replaces a file with one line of text |
 | `edit` | `edit [path]` | Opens a multiline editor; Tab inserts four spaces, Escape saves, and piped text prompts for a save path |
-| `vi` | `vi <path>` | Opens a vi-style editor: `h/j/k/l` move, `i` inserts, `o/O` open lines, `x` and `dd` delete, `Esc` returns to normal mode, and `:w`, `:q`, `:q!`, `:wq` save or quit |
+| `vi` | `vi <path>` | Opens the bundled user-mode vi-style editor: `h/j/k/l` move, `i` inserts, `o/O` open lines, `x` and `dd` delete, `Esc` returns to normal mode, and `:w`, `:q`, `:q!`, `:wq` save or quit |
 | `less` | `less [path]` | Views a file or piped text without editing; arrows navigate and `q` or Escape exits |
 | `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
-| `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection |
+| `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection; bundled user program |
 | `color` | `color <fg> [bg]` | Changes console foreground and optional background color |
 | `sleep` | `sleep <seconds>` | Delays execution for N seconds using timer interrupts |
 | `peek` | `peek <hex_addr>` | Reads and displays the byte stored at physical memory address |
@@ -207,7 +207,7 @@ PweOS/
 ├── tools/
 │   ├── image_to_rgb332.py   # Convert still images for the OS
 │   ├── video_to_pwe.py      # Convert video clips for the OS
-│   └── pack_videos.py       # Build the companion video disk
+│   └── pack_data_disk.py    # Build the companion data disk
 ├── boot/
 │   └── boot.asm             # Stage 1 MBR Bootloader (16-bit to 32-bit switch)
 └── src/
@@ -282,7 +282,7 @@ Convert a video supported by ffmpeg to PweOS's compact framebuffer format. By de
 uv run tools/video_to_pwe.py path/to/clip.mp4 --fps 10
 ```
 
-The converter writes `assets/clip.pwevid` by default. Add every `.pwevid` directly inside `assets/`; the build packs them into `build/videos.img` and lists them under `/videos/`. The player reads one encoded frame at a time from this companion disk, so full clips do not need to fit in kernel memory. PWEV stores up to 65,535 frames; at 10 FPS that is about 109 minutes. The format is 320x200 RGB332 with periodic keyframes and frame-to-frame deltas. To make a shorter clip, add `--seconds 30`. Install ffmpeg on the host first. After rebuilding, play it with `video /videos/clip.pwevid`; press any key during playback to return to the shell.
+The converter writes `assets/clip.pwevid` by default. Add every `.pwevid` directly inside `assets/`; the build packs them into `build/data.img` and lists them under `/videos/`. The player reads one encoded frame at a time from this companion disk, so full clips do not need to fit in kernel memory. PWEV stores up to 65,535 frames; at 10 FPS that is about 109 minutes. The format is 320x200 RGB332 with periodic keyframes and frame-to-frame deltas. To make a shorter clip, add `--seconds 30`. Install ffmpeg on the host first. After rebuilding, play it with `video /videos/clip.pwevid`; press any key during playback to return to the shell.
 
 Try the included animation first with `video /videos/demo.pwevid`.
 
