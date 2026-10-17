@@ -29,6 +29,7 @@ USER_RUNTIME_OBJ = $(BUILD)/pweos_libc.user.o
 USER_STDIO_OBJ = $(BUILD)/pweos_stdio.user.o
 USER_STDLIB_OBJ = $(BUILD)/pweos_stdlib.user.o
 USER_ERRNO_OBJ = $(BUILD)/pweos_errno.user.o
+USER_UNISTD_OBJ = $(BUILD)/pweos_unistd.user.o
 USER_HELLO_ELF = $(BUILD)/hello.elf
 KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
@@ -72,8 +73,11 @@ $(USER_STDLIB_OBJ): examples/pweos_stdlib.c examples/stdlib.h examples/ctype.h e
 $(USER_ERRNO_OBJ): examples/pweos_errno.c examples/errno.h | $(BUILD)
 	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
 
-$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) examples/user.ld
-	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) -o $@
+$(USER_UNISTD_OBJ): examples/pweos_unistd.c examples/fcntl.h examples/unistd.h examples/pweos.h | $(BUILD)
+	$(CLANG) --target=i386-unknown-none-elf -m32 -O2 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -Iexamples -c $< -o $@
+
+$(USER_HELLO_ELF): $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) examples/user.ld
+	$(LD) -m elf_i386 -static -z max-page-size=0x1000 -T examples/user.ld $(USER_CRT_OBJ) $(USER_HELLO_OBJ) $(USER_RUNTIME_OBJ) $(USER_STDIO_OBJ) $(USER_STDLIB_OBJ) $(USER_ERRNO_OBJ) $(USER_UNISTD_OBJ) -o $@
 
 $(KERNEL_LIB): $(wildcard src/*.rs) $(wildcard src/**/*.rs) $(wildcard assets/*.rgb332) $(wildcard assets/*.pwevid) $(USER_HELLO_ELF) build.rs Cargo.toml targets/i686-pweos.json
 	$(CARGO) build --release
