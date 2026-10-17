@@ -22,6 +22,7 @@ struct KeyboardState {
     tail: usize,
     shift_pressed: bool,
     caps_lock: bool,
+    ctrl_pressed: bool,
     extended_prefix: bool,
 }
 
@@ -33,6 +34,7 @@ impl KeyboardState {
             tail: 0,
             shift_pressed: false,
             caps_lock: false,
+            ctrl_pressed: false,
             extended_prefix: false,
         }
     }
@@ -112,7 +114,16 @@ fn keyboard_callback(_regs: &mut Registers) {
 
     if state.extended_prefix {
         state.extended_prefix = false;
-        if (scancode & 0x80) != 0 {
+        let is_release = (scancode & 0x80) != 0;
+        let code = scancode & 0x7F;
+
+        if code == 0x1D {
+            // Right Ctrl
+            state.ctrl_pressed = !is_release;
+            return;
+        }
+
+        if is_release {
             return;
         }
 
@@ -136,12 +147,22 @@ fn keyboard_callback(_regs: &mut Registers) {
         if released == 0x2A || released == 0x36 {
             state.shift_pressed = false;
         }
+        if released == 0x1D {
+            // Left Ctrl released
+            state.ctrl_pressed = false;
+        }
         return;
     }
 
     // Key press (make code)
     if scancode == 0x2A || scancode == 0x36 {
         state.shift_pressed = true;
+        return;
+    }
+
+    if scancode == 0x1D {
+        // Left Ctrl pressed
+        state.ctrl_pressed = true;
         return;
     }
 
@@ -169,7 +190,12 @@ fn keyboard_callback(_regs: &mut Registers) {
         };
 
         if c != 0 {
-            state.push(c);
+            if state.ctrl_pressed && c.is_ascii_alphabetic() {
+                // Ctrl+letter → control character (e.g. Ctrl+L = 0x0C)
+                state.push(c.to_ascii_uppercase() & 0x1F);
+            } else {
+                state.push(c);
+            }
         }
     }
 }
@@ -181,6 +207,7 @@ pub fn keyboard_init() {
         state.tail = 0;
         state.shift_pressed = false;
         state.caps_lock = false;
+        state.ctrl_pressed = false;
         state.extended_prefix = false;
     }
 
