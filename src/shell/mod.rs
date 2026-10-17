@@ -1128,12 +1128,6 @@ fn cmd_history(_args: &[&str]) {
     println!("----------------------------------------------------");
 }
 
-pub fn shell_init() {
-    vga_set_color(VgaColor::Yellow, VgaColor::Black);
-    println!("Type 'help' to see available commands.\n");
-    vga_set_color(VgaColor::LightGrey, VgaColor::Black);
-}
-
 fn shell_readline(buffer: &mut [u8]) -> usize {
     let mut index = 0;
     let max_len = buffer.len();

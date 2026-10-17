@@ -23,7 +23,7 @@ use drivers::timer::timer_init;
 use drivers::vga::{vga_init, vga_set_color, VgaColor, VGA_HEIGHT, VGA_WIDTH};
 use fs::ramfs::ramfs_init;
 use mm::heap::{heap_init, HEAP_INITIAL_SIZE, HEAP_START_ADDR};
-use shell::{shell_init, shell_run, PWEOS_VERSION};
+use shell::{shell_run, PWEOS_VERSION};
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
@@ -58,7 +58,6 @@ pub extern "C" fn kmain() -> ! {
     println!("Type 'help' to see available commands.\n");
     vga_set_color(VgaColor::White, VgaColor::Black);
 
-    shell_init();
     shell_run();
 }
 
