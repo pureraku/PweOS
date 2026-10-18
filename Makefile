@@ -19,9 +19,14 @@ BOOT_BIN = $(BUILD)/boot.bin
 KERNEL_BIN = $(BUILD)/kernel.bin
 IMAGE = $(BUILD)/pweos.img
 DATA_IMAGE = $(BUILD)/data.img
+STORAGE_IMAGE = $(BUILD)/storage.img
 ISO_IMAGE = $(BUILD)/pweos.iso
 ISO_STAGING = $(BUILD)/iso-staging
+
 DATA_DRIVE = -drive file=$(DATA_IMAGE),format=raw,if=ide,index=0
+STORAGE_DRIVE = -drive file=$(STORAGE_IMAGE),format=raw,if=ide,index=1
+
+STORAGE_SIZE = 16M
 
 ENTRY_OBJ = $(BUILD)/entry.asm.o
 ISR_OBJ = $(BUILD)/isr.asm.o
@@ -47,7 +52,7 @@ KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
 
-.PHONY: all iso run-iso run-iso-fullscreen run run-fullscreen run-curses run-serial run-headless clean check clippy
+.PHONY: all iso storage run-iso run-iso-fullscreen run run-fullscreen run-curses run-serial run-headless clean check clippy
 
 all: $(IMAGE) $(DATA_IMAGE)
 
@@ -68,6 +73,17 @@ iso: $(IMAGE) $(DATA_IMAGE)
 
 $(BUILD):
 	mkdir -p $(BUILD)
+
+$(STORAGE_IMAGE): | $(BUILD)
+	@if [ ! -f "$@" ]; then \
+		echo "Creating persistent storage image ($(STORAGE_SIZE))..."; \
+		truncate -s $(STORAGE_SIZE) "$@"; \
+		echo "Created $@"; \
+	else \
+		echo "Keeping existing persistent storage: $@"; \
+	fi
+
+storage: $(STORAGE_IMAGE)
 
 $(BOOT_BIN): boot/boot.asm | $(BUILD)
 	$(ASM) $< -f bin -o $@
@@ -156,34 +172,26 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 $(DATA_IMAGE): $(wildcard assets/*.pwevid) $(USER_PROGRAM_ELFS) examples/user_programs.txt $(TCC_ELF) tools/pack_data_disk.py | $(BUILD)
 	python3 tools/pack_data_disk.py assets examples/user_programs.txt $(BUILD) $(TCC_ELF) $(DATA_IMAGE)
 
-run-iso: iso
-	qemu-system-i386 \
-		-cdrom $(ISO_IMAGE) \
-		-boot d \
-		-vga std \
-		-display cocoa
+run: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_DISPLAY)
 
-run-iso-fullscreen: iso
-	qemu-system-i386 \
-		-cdrom $(ISO_IMAGE) \
-		-boot d \
-		-vga std \
-		-display cocoa,zoom-to-fit=on,full-screen=on
+run-fullscreen: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_FULLSCREEN)
 
-run: $(IMAGE) $(DATA_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY)
+run-curses: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) -display curses
 
-run-fullscreen: $(IMAGE) $(DATA_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_FULLSCREEN)
+run-serial: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_DISPLAY) -serial stdio
 
-run-curses: $(IMAGE) $(DATA_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) -display curses
+run-headless: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) -display none -serial stdio
 
-run-serial: $(IMAGE) $(DATA_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY) -serial stdio
+run-iso: iso $(STORAGE_IMAGE)
+	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) -vga std $(QEMU_DISPLAY)
 
-run-headless: $(IMAGE) $(DATA_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) -display none -serial stdio
+run-iso-fullscreen: iso $(STORAGE_IMAGE)
+	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) -vga std $(QEMU_FULLSCREEN)
 
 check:
 	$(CARGO) check
@@ -192,4 +200,11 @@ clippy:
 	$(CARGO) clippy
 
 clean:
+	@if [ -f "$(STORAGE_IMAGE)" ]; then \
+		cp "$(STORAGE_IMAGE)" "$(STORAGE_IMAGE).backup"; \
+	fi
 	rm -rf $(BUILD) target
+	@if [ -f "$(STORAGE_IMAGE).backup" ]; then \
+		mkdir -p $(BUILD); \
+		mv "$(STORAGE_IMAGE).backup" "$(STORAGE_IMAGE)"; \
+	fi
