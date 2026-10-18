@@ -47,7 +47,7 @@ KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
 
-.PHONY: all iso run-iso run run-fullscreen run-curses run-serial run-headless clean check clippy
+.PHONY: all iso run-iso run-iso-fullscreen run run-fullscreen run-curses run-serial run-headless clean check clippy
 
 all: $(IMAGE) $(DATA_IMAGE)
 
@@ -162,6 +162,13 @@ run-iso: iso
 		-boot d \
 		-vga std \
 		-display cocoa
+
+run-iso-fullscreen: iso
+	qemu-system-i386 \
+		-cdrom $(ISO_IMAGE) \
+		-boot d \
+		-vga std \
+		-display cocoa,zoom-to-fit=on,full-screen=on
 
 run: $(IMAGE) $(DATA_IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY)
