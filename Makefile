@@ -19,6 +19,8 @@ BOOT_BIN = $(BUILD)/boot.bin
 KERNEL_BIN = $(BUILD)/kernel.bin
 IMAGE = $(BUILD)/pweos.img
 DATA_IMAGE = $(BUILD)/data.img
+ISO_IMAGE = $(BUILD)/pweos.iso
+ISO_STAGING = $(BUILD)/iso-staging
 DATA_DRIVE = -drive file=$(DATA_IMAGE),format=raw,if=ide,index=0
 
 ENTRY_OBJ = $(BUILD)/entry.asm.o
@@ -45,9 +47,24 @@ KERNEL_LIB = target/i686-pweos/release/libpweos.a
 
 LDFLAGS = -m elf_i386 --gc-sections --oformat binary -T linker.ld
 
-.PHONY: all run run-fullscreen run-curses run-serial run-headless clean check clippy
+.PHONY: all iso run-iso run run-fullscreen run-curses run-serial run-headless clean check clippy
 
 all: $(IMAGE) $(DATA_IMAGE)
+
+iso: $(IMAGE) $(DATA_IMAGE)
+	mkdir -p $(ISO_STAGING)
+	cp $(IMAGE) $(ISO_STAGING)/pweos.img
+	cp $(DATA_IMAGE) $(ISO_STAGING)/data.img
+	@printf 'PweOS -- Bootable Floppy Disk Image\n=====================================\n\nTo run in QEMU (Linux/macOS):\n\n  qemu-system-i386 \\\n    -drive file=pweos.img,format=raw,if=floppy \\\n    -drive file=data.img,format=raw,if=ide,index=0 \\\n    -display default\n\nOn macOS (Homebrew QEMU):\n  qemu-system-i386 \\\n    -drive file=pweos.img,format=raw,if=floppy \\\n    -drive file=data.img,format=raw,if=ide,index=0 \\\n    -display cocoa,zoom-to-fit=on\n\nOn Windows (download from qemu.org):\n  qemu-system-i386.exe -drive file=pweos.img,format=raw,if=floppy -drive file=data.img,format=raw,if=ide,index=0\n\nIn VirtualBox:\n  1. Create new VM: Type=Other, Version=Other/Unknown (32-bit)\n  2. Skip disk creation\n  3. Settings > Storage > Add Floppy Controller > add pweos.img as floppy\n  4. Settings > Storage > Add IDE Controller  > add data.img  as hard disk\n  5. Boot the VM\n\nType '"'"'help'"'"' once booted for all commands.\nTry: video /videos/demo.pwevid   (demo video)\n     image /images/cat.rgb332    (image viewer)\n     tcc hello.c -o hello        (live C compiler!)\n' > $(ISO_STAGING)/README.txt
+	xorriso -as mkisofs \
+		-o $(ISO_IMAGE) \
+		-V PWEOS \
+		-J -R \
+		-b pweos.img \
+		-c boot.cat \
+		-boot-load-size 2880 \
+		$(ISO_STAGING)/
+	@echo "ISO created: $(ISO_IMAGE)"
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -138,6 +155,13 @@ $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
 
 $(DATA_IMAGE): $(wildcard assets/*.pwevid) $(USER_PROGRAM_ELFS) examples/user_programs.txt $(TCC_ELF) tools/pack_data_disk.py | $(BUILD)
 	python3 tools/pack_data_disk.py assets examples/user_programs.txt $(BUILD) $(TCC_ELF) $(DATA_IMAGE)
+
+run-iso: iso
+	qemu-system-i386 \
+		-cdrom $(ISO_IMAGE) \
+		-boot d \
+		-vga std \
+		-display cocoa
 
 run: $(IMAGE) $(DATA_IMAGE)
 	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(QEMU_DISPLAY)
