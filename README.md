@@ -311,6 +311,18 @@ make run-fullscreen
 ```
 Launches QEMU directly in full screen mode (`-display cocoa,zoom-to-fit=on,full-screen=on`).
 
+### Build a Bootable ISO
+```bash
+make iso
+```
+Builds PweOS and packages the bootloader, kernel, and data disk into a bootable ISO image.
+
+### Run ISO in QEMU
+```bash
+make run-iso
+```
+Builds the ISO if needed and launches QEMU to boot PweOS directly from the ISO in a graphical window.
+
 ### Run in Terminal with Curses (Large Terminal Mode)
 ```bash
 make run-curses
