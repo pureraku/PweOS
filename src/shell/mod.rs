@@ -18,6 +18,10 @@ use crate::fs::ramfs::{
     ramfs_count_in, ramfs_create, ramfs_create_dir, ramfs_delete, ramfs_delete_dir, ramfs_is_dir,
     ramfs_list, ramfs_nuke, ramfs_read, ramfs_write,
 };
+use crate::fs::pwefs::{
+    pwefs_delete, pwefs_format, pwefs_is_mounted, pwefs_list, pwefs_mount, pwefs_read,
+    pwefs_write,
+};
 use crate::mm::heap::heap_get_stats;
 
 pub const PWEOS_VERSION: &str = "0.1.0";
@@ -280,6 +284,11 @@ static COMMANDS: &[Command] = &[
         name: "about",
         desc: "Information about PweOS system",
         handler: cmd_about,
+    },
+    Command {
+        name: "pfs",
+        desc: "Manage persistent storage: pfs <format|mount|status|ls|write|cat|rm>",
+        handler: cmd_pfs,
     },
 ];
 
@@ -1004,6 +1013,111 @@ fn cmd_sleep(args: &[&str]) {
     println!("Sleeping for {} second(s)... :3", s);
     timer_sleep((s as u32) * 100);
     println!("Done. :3");
+}
+
+fn cmd_pfs(args: &[&str]) {
+    if args.len() < 2 {
+        println!("Usage: pfs <format|mount|status|ls|write|cat|rm>");
+        return;
+    }
+
+    match args[1] {
+        "format" => {
+            println!("WARNING: This initializes the persistent filesystem.");
+            println!("Existing PweFS files will become inaccessible.");
+
+            match pwefs_format() {
+                Ok(()) => println!("PweFS formatted and mounted successfully."),
+                Err(error) => println!("pfs format: {}", error),
+            }
+        }
+
+        "mount" => match pwefs_mount() {
+            Ok(()) => println!("PweFS mounted successfully."),
+            Err(error) => println!("pfs mount: {}", error),
+        },
+
+        "status" => {
+            println!(
+                "PweFS status: {}",
+                if pwefs_is_mounted() {
+                    "mounted"
+                } else {
+                    "not mounted"
+                }
+            );
+        }
+
+        "ls" => {
+            if !pwefs_is_mounted() {
+                println!("PweFS is not mounted. Run 'pfs mount' first.");
+                return;
+            }
+
+            println!("Persistent files:");
+            pwefs_list(|name, size| {
+                println!("  {:<32} {} bytes", name, size);
+            });
+        }
+
+        "write" => {
+            if args.len() < 4 {
+                println!("Usage: pfs write <filename> <text...>");
+                return;
+            }
+
+            let mut content = alloc::string::String::new();
+
+            for (index, arg) in args.iter().enumerate().skip(3) {
+                if index > 3 {
+                    content.push(' ');
+                }
+                content.push_str(arg);
+            }
+
+            content.push('\n');
+
+            match pwefs_write(args[2], content.as_bytes()) {
+                Ok(()) => println!("Saved '{}' to persistent storage.", args[2]),
+                Err(error) => println!("pfs write: {}", error),
+            }
+        }
+
+        "cat" => {
+            if args.len() < 3 {
+                println!("Usage: pfs cat <filename>");
+                return;
+            }
+
+            match pwefs_read(args[2]) {
+                Ok(data) => {
+                    if let Ok(text) = core::str::from_utf8(&data) {
+                        print!("{}", text);
+                        if !text.ends_with('\n') {
+                            println!();
+                        }
+                    } else {
+                        println!("pfs cat: file is not valid UTF-8 text.");
+                    }
+                }
+                Err(error) => println!("pfs cat: {}", error),
+            }
+        }
+
+        "rm" => {
+            if args.len() < 3 {
+                println!("Usage: pfs rm <filename>");
+                return;
+            }
+
+            match pwefs_delete(args[2]) {
+                Ok(()) => println!("Deleted '{}' from persistent storage.", args[2]),
+                Err(error) => println!("pfs rm: {}", error),
+            }
+        }
+
+        _ => println!("Unknown pfs command. Try: pfs status"),
+    }
 }
 
 fn parse_hex(s: &str) -> u32 {
