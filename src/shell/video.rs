@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::drivers::ata::read_sectors;
+use crate::drivers::disk::read_sectors;
 use crate::drivers::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use crate::drivers::keyboard::{keyboard_getchar, keyboard_has_char};
 use crate::drivers::timer::timer_sleep;

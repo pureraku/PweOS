@@ -5,3 +5,5 @@ pub mod rtc;
 pub mod serial;
 pub mod timer;
 pub mod vga;
+pub mod disk;
+pub mod atapi;

@@ -269,7 +269,7 @@ pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
     let mut data = Vec::new();
     data.try_reserve_exact(sector_count * 512).ok()?;
     data.resize(sector_count * 512, 0);
-    crate::drivers::ata::read_sectors(start_sector, sector_count, &mut data).ok()?;
+    crate::drivers::disk::read_sectors(start_sector, sector_count, &mut data).ok()?;
     data.truncate(byte_len as usize);
     Some(data)
 }
@@ -394,7 +394,7 @@ fn read_disk_file_at(
     let mut sectors = Vec::new();
     sectors.try_reserve_exact(sector_count * 512).ok()?;
     sectors.resize(sector_count * 512, 0);
-    crate::drivers::ata::read_sectors(first_sector, sector_count, &mut sectors).ok()?;
+    crate::drivers::disk::read_sectors(first_sector, sector_count, &mut sectors).ok()?;
     output[..count].copy_from_slice(&sectors[sector_offset..sector_offset + count]);
     Some(count)
 }
