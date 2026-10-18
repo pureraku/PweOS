@@ -190,8 +190,7 @@ Commands can be connected with `|` to pass output to the next command. For examp
 ---
 
 ## Repository Structure
-
-```
+```text
 PweOS/
 ├── Cargo.toml               # Rust package manifest
 ├── rust-toolchain.toml      # Nightly toolchain pinning & rust-src
@@ -199,8 +198,8 @@ PweOS/
 │   └── config.toml          # Custom target specification & build-std flags
 ├── targets/
 │   └── i686-pweos.json      # Bare-metal i686 target definition
-├── Makefile                 # Build system & QEMU targets
-├── README.md                # Documentation & Architecture overview
+├── Makefile                 # Build system, ISO generation & QEMU targets
+├── README.md                # Documentation & architecture overview
 ├── linker.ld                # Linker script (entry at 0x10000)
 ├── build.rs                 # Bundles image and video metadata
 ├── assets/                  # RGB332 stills and PWEV clips
@@ -209,7 +208,7 @@ PweOS/
 │   ├── video_to_pwe.py      # Convert video clips for the OS
 │   └── pack_data_disk.py    # Build the companion data disk
 ├── boot/
-│   └── boot.asm             # Stage 1 MBR Bootloader (16-bit to 32-bit switch)
+│   └── boot.asm             # Stage 1 bootloader (16-bit to 32-bit switch)
 └── src/
     ├── lib.rs               # Kernel initialization (kmain) & panic handler
     ├── print.rs             # Formatted print! and println! macros
@@ -219,13 +218,15 @@ PweOS/
     │   ├── entry.asm        # 32-bit kernel startup & entry stub
     │   ├── cpu.rs           # CPUID hardware feature detection
     │   ├── idt.rs           # Interrupt Descriptor Table management
-    │   ├── io.rs            # x86 port I/O (inb, outb, inw, outw, io_wait)
+    │   ├── io.rs            # x86 port I/O operations
     │   ├── isr.asm          # Low-level interrupt service routine stubs
     │   ├── isr.rs           # Exception and IRQ dispatchers & panic dump
     │   └── pic.rs           # 8259 Programmable Interrupt Controller
     ├── drivers/
     │   ├── mod.rs           # Drivers module root
-    │   ├── ata.rs           # Primary-master ATA PIO reads for video storage
+    │   ├── ata.rs           # ATA PIO disk access
+    │   ├── atapi.rs         # ATAPI CD-ROM sector reader
+    │   ├── disk.rs          # Unified disk reader with ISO data disk fallback
     │   ├── framebuffer.rs   # VGA RGB332 pixel, line, and triangle drawing
     │   ├── keyboard.rs      # PS/2 keyboard & serial input with arrow keys
     │   ├── rtc.rs           # CMOS Real-Time Clock driver
@@ -242,6 +243,7 @@ PweOS/
         ├── video.rs         # PWEV frame decoding and playback
         └── mod.rs           # Interactive shell and builtin commands
 ```
+
 
 ---
 
