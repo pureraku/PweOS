@@ -685,11 +685,28 @@ fn poll_tcp(destination: [u8; 4], local_port: u16, remote_port: u16) -> Option<T
 
 /// Fetch a bounded plain-HTTP response (port 80). HTTPS/TLS is not included.
 pub fn http_request(host: &str, path: &str, method: &str, timeout_ticks: u32) -> Result<Vec<u8>, &'static str> {
+    http_request_with_body(host, path, method, &[], &[], timeout_ticks)
+}
+
+/// Send a small HTTP request with optional caller-provided headers and body.
+/// The current driver emits one TCP data segment, so the complete request is
+/// bounded to fit in one Ethernet frame.
+pub fn http_request_with_body(
+    host: &str,
+    path: &str,
+    method: &str,
+    headers: &[&str],
+    body: &[u8],
+    timeout_ticks: u32,
+) -> Result<Vec<u8>, &'static str> {
     if !is_available() { return Err("no RTL8139 adapter found"); }
     if !path.starts_with('/') || path.bytes().any(|b| b == b'\r' || b == b'\n')
         || host.bytes().any(|b| b == b'\r' || b == b'\n')
         || method.is_empty() || method.bytes().any(|b| !b.is_ascii_uppercase() && b != b'-')
     { return Err("invalid HTTP host or path"); }
+    if headers.iter().any(|header| !header.contains(':') || header.bytes().any(|b| b == b'\r' || b == b'\n')) {
+        return Err("invalid HTTP header; use Name:value without line breaks");
+    }
     let remote = resolve_ipv4(host, timeout_ticks)?;
     let gateway_mac = resolve_mac(gateway(), timeout_ticks)?;
     let source_port = 40000 + (timer_get_ticks() % 20000) as u16;
@@ -714,11 +731,21 @@ pub fn http_request(host: &str, path: &str, method: &str, timeout_ticks: u32) ->
         }
     }
 
-    let request = alloc::format!("{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: PweOS/0.1\r\nConnection: close\r\n\r\n", method, path, host);
-    if !send_tcp(remote, gateway_mac, source_port, 80, local_sequence, remote_sequence, 0x18, request.as_bytes()) {
+    let mut request = alloc::format!("{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: PweOS/0.1\r\nConnection: close\r\n", method, path, host);
+    for header in headers { request.push_str(header); request.push_str("\r\n"); }
+    if !body.is_empty() && !headers.iter().any(|header| header.split_once(':')
+        .map(|(name, _)| name.eq_ignore_ascii_case("content-length")).unwrap_or(false)) {
+        request.push_str(&alloc::format!("Content-Length: {}\r\n", body.len()));
+    }
+    request.push_str("\r\n");
+    let request_size = request.len().saturating_add(body.len());
+    if request_size > 1482 { return Err("request too large for the current TCP driver (maximum 1482 bytes)"); }
+    let mut request_bytes = request.into_bytes();
+    request_bytes.extend_from_slice(body);
+    if !send_tcp(remote, gateway_mac, source_port, 80, local_sequence, remote_sequence, 0x18, &request_bytes) {
         return Err("could not send HTTP request");
     }
-    local_sequence = local_sequence.wrapping_add(request.len() as u32);
+    local_sequence = local_sequence.wrapping_add(request_bytes.len() as u32);
     let mut response = Vec::new();
     let start = timer_get_ticks();
     while timer_get_ticks().wrapping_sub(start) < timeout_ticks * 3 {
@@ -739,10 +766,6 @@ pub fn http_request(host: &str, path: &str, method: &str, timeout_ticks: u32) ->
         }
     }
     if response.is_empty() { Err("HTTP response timed out") } else { Ok(response) }
-}
-
-pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &'static str> {
-    http_request(host, path, "GET", timeout_ticks)
 }
 
 pub fn http_status(response: &[u8]) -> Result<u16, &'static str> {
