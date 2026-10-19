@@ -102,7 +102,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
 - **ATA PIO (`ata.rs`)**: Provides sector access to IDE disks. The primary-master companion data disk supplies video assets and user programs; the primary-slave storage disk backs persistent PweFS data under `/home/`.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
-- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration and lease renewal, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
+- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration and lease renewal, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. `curl` prints the response body by default and supports saving, headers, HEAD, redirects, and custom methods. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
 
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
@@ -180,7 +180,7 @@ PweFS uses a fixed on-disk directory table, so the number of entries and path le
 | `cpuinfo` | `cpuinfo` | Queries CPUID to display vendor, brand string, and feature flags |
 | `ifconfig` | `ifconfig` | Displays RTL8139 MAC address and current IPv4 configuration |
 | `ping` | `ping <IPv4 or hostname>` | Resolves a hostname with DNS when needed, then sends one ICMP echo request |
-| `http` | `http <host> [path]` | Makes a plain HTTP GET request on TCP port 80 and prints the response |
+| `curl` | `curl [-o file] [-I] [-i] [-L] [-f] [-X method] http://<host>/<path>` | Fetches a plain HTTP response; body prints by default, `-o` saves to RAMFS or persistent `/home/`, `-I` requests headers, `-i` includes headers, `-L` follows up to 5 redirects, `-f` errors on HTTP status 400+, and `-X` selects a method |
 | `meminfo` | `meminfo` | Displays total heap capacity, used bytes, free bytes, and blocks |
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |

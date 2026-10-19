@@ -683,11 +683,12 @@ fn poll_tcp(destination: [u8; 4], local_port: u16, remote_port: u16) -> Option<T
     }
 }
 
-/// Fetch a small plain-HTTP response (port 80). HTTPS/TLS is not included.
-pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &'static str> {
+/// Fetch a bounded plain-HTTP response (port 80). HTTPS/TLS is not included.
+pub fn http_request(host: &str, path: &str, method: &str, timeout_ticks: u32) -> Result<Vec<u8>, &'static str> {
     if !is_available() { return Err("no RTL8139 adapter found"); }
     if !path.starts_with('/') || path.bytes().any(|b| b == b'\r' || b == b'\n')
         || host.bytes().any(|b| b == b'\r' || b == b'\n')
+        || method.is_empty() || method.bytes().any(|b| !b.is_ascii_uppercase() && b != b'-')
     { return Err("invalid HTTP host or path"); }
     let remote = resolve_ipv4(host, timeout_ticks)?;
     let gateway_mac = resolve_mac(gateway(), timeout_ticks)?;
@@ -713,7 +714,7 @@ pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &
         }
     }
 
-    let request = alloc::format!("GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: PweOS/0.1\r\nConnection: close\r\n\r\n", path, host);
+    let request = alloc::format!("{} {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: PweOS/0.1\r\nConnection: close\r\n\r\n", method, path, host);
     if !send_tcp(remote, gateway_mac, source_port, 80, local_sequence, remote_sequence, 0x18, request.as_bytes()) {
         return Err("could not send HTTP request");
     }
@@ -725,7 +726,7 @@ pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &
             if packet.flags & 0x04 != 0 { return Err("server reset the TCP connection"); }
             if packet.sequence == remote_sequence && !packet.payload.is_empty() {
                 remote_sequence = remote_sequence.wrapping_add(packet.payload.len() as u32);
-                let available = 4096usize.saturating_sub(response.len());
+                let available = 32768usize.saturating_sub(response.len());
                 response.extend_from_slice(&packet.payload[..packet.payload.len().min(available)]);
                 let _ = send_tcp(remote, gateway_mac, source_port, 80, local_sequence, remote_sequence, 0x10, &[]);
             }
@@ -734,8 +735,76 @@ pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &
                 let _ = send_tcp(remote, gateway_mac, source_port, 80, local_sequence, remote_sequence, 0x10, &[]);
                 break;
             }
-            if response.len() >= 4096 { break; }
+            if response.len() >= 32768 { break; }
         }
     }
     if response.is_empty() { Err("HTTP response timed out") } else { Ok(response) }
+}
+
+pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &'static str> {
+    http_request(host, path, "GET", timeout_ticks)
+}
+
+pub fn http_status(response: &[u8]) -> Result<u16, &'static str> {
+    let line_end = response.windows(2).position(|window| window == b"\r\n")
+        .ok_or("malformed HTTP status line")?;
+    let line = core::str::from_utf8(&response[..line_end]).map_err(|_| "invalid HTTP status line")?;
+    line.split_ascii_whitespace().nth(1).ok_or("invalid HTTP status line")?
+        .parse::<u16>().map_err(|_| "invalid HTTP status code")
+}
+
+pub fn http_location(response: &[u8]) -> Option<&str> {
+    let header_end = response.windows(4).position(|window| window == b"\r\n\r\n")?;
+    let headers = core::str::from_utf8(&response[..header_end]).ok()?;
+    headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("location").then(|| value.trim())
+    })
+}
+
+/// Extract a successful response body, decoding HTTP chunked transfer encoding.
+pub fn http_response_body(response: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let header_end = response.windows(4).position(|window| window == b"\r\n\r\n")
+        .ok_or("malformed HTTP response headers")?;
+    let headers = core::str::from_utf8(&response[..header_end]).map_err(|_| "non-text HTTP headers")?;
+    let status_line = headers.lines().next().ok_or("missing HTTP status line")?;
+    let _status = status_line.split_ascii_whitespace().nth(1).ok_or("invalid HTTP status line")?
+        .parse::<u16>().map_err(|_| "invalid HTTP status code")?;
+    let mut content_length = None;
+    let mut chunked = false;
+    for header in headers.lines().skip(1) {
+        if let Some((name, value)) = header.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse::<usize>().ok();
+            } else if name.eq_ignore_ascii_case("transfer-encoding")
+                && value.to_ascii_lowercase().contains("chunked")
+            {
+                chunked = true;
+            }
+        }
+    }
+    let body = &response[header_end + 4..];
+    if chunked {
+        let mut decoded = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let line_end = body.get(cursor..).and_then(|remaining| remaining.windows(2).position(|w| w == b"\r\n"))
+                .map(|offset| cursor + offset).ok_or("malformed chunked HTTP body")?;
+            let size_line = core::str::from_utf8(&body[cursor..line_end]).map_err(|_| "invalid HTTP chunk size")?;
+            let size_text = size_line.split(';').next().unwrap_or("").trim();
+            let size = usize::from_str_radix(size_text, 16).map_err(|_| "invalid HTTP chunk size")?;
+            cursor = line_end + 2;
+            if size == 0 { return Ok(decoded); }
+            let end = cursor.checked_add(size).ok_or("HTTP chunk length overflow")?;
+            let data = body.get(cursor..end).ok_or("truncated HTTP chunk")?;
+            decoded.extend_from_slice(data);
+            cursor = end.checked_add(2).ok_or("HTTP chunk length overflow")?;
+            if body.get(end..cursor) != Some(&b"\r\n"[..]) { return Err("invalid HTTP chunk terminator"); }
+        }
+    }
+    if let Some(length) = content_length {
+        if body.len() < length { return Err("truncated HTTP response body"); }
+        return Ok(body[..length].to_vec());
+    }
+    Ok(body.to_vec())
 }

@@ -159,7 +159,7 @@ static COMMANDS: &[Command] = &[
     },
     Command { name: "ifconfig", desc: "Show network adapter and IPv4 configuration", handler: cmd_ifconfig },
     Command { name: "ping", desc: "Ping an IPv4 address or DNS hostname", handler: cmd_ping },
-    Command { name: "http", desc: "Fetch a plain HTTP page: http <host> [path]", handler: cmd_http },
+    Command { name: "curl", desc: "Fetch an HTTP URL (supports -o, -I, -i, -L, -f, -X)", handler: cmd_curl },
     Command {
         name: "meminfo",
         desc: "Display kernel heap memory statistics",
@@ -347,16 +347,109 @@ fn cmd_ping(args: &[&str]) {
     match network::ping(ip, 200) { Ok(()) => println!("reply received"), Err(error) => println!("{}", error) }
 }
 
-fn cmd_http(args: &[&str]) {
-    if args.len() < 2 || args.len() > 3 { println!("Usage: http <host> [path]"); return; }
-    let path = if args.len() == 3 { args[2] } else { "/" };
-    print!("GET http://{}{} ...\n", args[1], path);
-    match network::http_get(args[1], path, 300) {
-        Ok(response) => match core::str::from_utf8(&response) {
-            Ok(text) => print!("{}", text),
-            Err(_) => println!("Received {} bytes of non-UTF-8 data", response.len()),
-        },
-        Err(error) => println!("http: {}", error),
+fn parse_http_url(url: &str) -> Result<(String, String), &'static str> {
+    if url.starts_with("https://") { return Err("HTTPS/TLS is not supported yet (plain HTTP only)"); }
+    let url = url.strip_prefix("http://").ok_or("URL must start with http://")?;
+    let split = url.find('/').unwrap_or(url.len());
+    let host = &url[..split];
+    if host.is_empty() { return Err("URL must include a hostname"); }
+    if host.contains(':') { return Err("custom ports are not supported (HTTP uses port 80)"); }
+    let path = if split == url.len() { String::from("/") } else { String::from(&url[split..]) };
+    Ok((String::from(host), path))
+}
+
+fn curl_save(path: &str, body: &[u8]) -> Result<(), &'static str> {
+    let output_path = resolve_path(path);
+    if ramfs_is_dir(&output_path) { return Err("output path is a directory"); }
+    if ramfs_read(&output_path).is_none() && !ramfs_create(&output_path, b"") {
+        return Err("could not create output file");
+    }
+    if !ramfs_write(&output_path, body, false) { return Err("could not write output file"); }
+    println!("saved {} bytes to {}", body.len(), output_path);
+    Ok(())
+}
+
+fn cmd_curl(args: &[&str]) {
+    let mut output: Option<&str> = None;
+    let mut include_headers = false;
+    let mut head = false;
+    let mut follow = false;
+    let mut fail = false;
+    let mut method: Option<&str> = None;
+    let mut url: Option<&str> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i] {
+            "-o" | "--output" | "-X" | "--request" => {
+                if i + 1 >= args.len() { println!("curl: option {} needs an argument", args[i]); return; }
+                if args[i] == "-o" || args[i] == "--output" { output = Some(args[i + 1]); }
+                else { method = Some(args[i + 1]); }
+                i += 2;
+            }
+            "-I" | "--head" => { head = true; i += 1; }
+            "-i" | "--include" => { include_headers = true; i += 1; }
+            "-L" | "--location" => { follow = true; i += 1; }
+            "-f" | "--fail" => { fail = true; i += 1; }
+            "-s" | "--silent" | "--show-error" => { i += 1; }
+            option if option.starts_with('-') => { println!("curl: unsupported option '{}'", option); return; }
+            value if url.is_none() => { url = Some(value); i += 1; }
+            value => { println!("curl: unexpected argument '{}'", value); return; }
+        }
+    }
+    let Some(initial_url) = url else {
+        println!("Usage: curl [options] <http-url>\n  -o, --output <file>       save response body\n  -I, --head                show headers using HEAD\n  -i, --include             print headers and body\n  -L, --location            follow up to 5 redirects\n  -f, --fail                error for HTTP status >= 400\n  -X, --request <method>    use a custom method");
+        return;
+    };
+    let mut current_url = String::from(initial_url);
+    let selected_method = method.unwrap_or(if head { "HEAD" } else { "GET" });
+    let mut redirects = 0;
+    let response = loop {
+        let (host, path) = match parse_http_url(&current_url) {
+            Ok(parts) => parts,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        let response = match network::http_request(&host, &path, selected_method, 300) {
+            Ok(response) => response,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        let status = match network::http_status(&response) {
+            Ok(status) => status,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        if follow && (300..400).contains(&status) {
+            if redirects >= 5 { println!("curl: too many redirects"); return; }
+            if let Some(location) = network::http_location(&response) {
+                current_url = if location.starts_with("http://") || location.starts_with("https://") {
+                    String::from(location)
+                } else if location.starts_with('/') {
+                    alloc::format!("http://{}{}", host, location)
+                } else {
+                    let base = path.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+                    alloc::format!("http://{}{}/{}", host, base, location)
+                };
+                redirects += 1;
+                continue;
+            }
+        }
+        if fail && status >= 400 { println!("curl: HTTP status {}", status); return; }
+        break response;
+    };
+    if head || include_headers {
+        let end = response.windows(4).position(|window| window == b"\r\n\r\n")
+            .map(|offset| offset + 4).unwrap_or(response.len());
+        if let Ok(headers) = core::str::from_utf8(&response[..end]) { print!("{}", headers); }
+    }
+    if head { return; }
+    let body = match network::http_response_body(&response) {
+        Ok(body) => body,
+        Err(error) => { println!("curl: {}", error); return; }
+    };
+    if let Some(output) = output {
+        if let Err(error) = curl_save(output, &body) { println!("curl: {}", error); }
+    } else if let Ok(text) = core::str::from_utf8(&body) {
+        print!("{}", text);
+    } else {
+        println!("curl: binary response; use -o <file> to save it ({} bytes)", body.len());
     }
 }
 
