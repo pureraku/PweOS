@@ -102,7 +102,33 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
 - **ATA PIO (`ata.rs`)**: Provides sector access to IDE disks. The primary-master companion data disk supplies video assets and user programs; the primary-slave storage disk backs persistent PweFS data under `/home/`.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
-- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration and lease renewal, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. `curl` prints the response body by default and supports saving, headers, HEAD, redirects, and custom methods. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
+- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration and lease renewal, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. `curl` prints or saves responses and supports HEAD, custom methods, request data, headers, and redirects. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
+
+#### `curl` examples
+
+`curl` supports plain HTTP URLs on port 80. By default it sends a GET request and prints the response body:
+
+```text
+curl http://example.com/
+```
+
+Save a response to a chosen file with `-o`, or use the URL's final path segment as the filename with `-O`:
+
+```text
+curl -o page.html http://example.com/
+curl -O http://example.com/s.js
+```
+
+Send a POST body with `-d` (which selects POST unless `-X` overrides it). Use `-H` to add request headers; quote values containing spaces:
+
+```text
+curl -d 'name=PweOS&message=hello world' http://httpbin.org/post
+curl -H 'Content-Type: application/json' -d '{"os":"PweOS"}' http://httpbin.org/post
+```
+
+Choose another method with `-X`, for example `curl -X PUT -d 'enabled=true' http://<host>/api/settings`. Other supported options are `-I` (HEAD request), `-i` (include response headers), `-L` (follow up to five redirects), and `-f` (report an error for HTTP status 400 or higher).
+
+The current client does not support HTTPS/TLS or custom ports. A request, including its headers and body, must fit in one TCP segment; response data is capped at 32 KiB. The shell groups quoted values for curl options such as `-d` and `-H`.
 
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
@@ -180,7 +206,7 @@ PweFS uses a fixed on-disk directory table, so the number of entries and path le
 | `cpuinfo` | `cpuinfo` | Queries CPUID to display vendor, brand string, and feature flags |
 | `ifconfig` | `ifconfig` | Displays RTL8139 MAC address and current IPv4 configuration |
 | `ping` | `ping <IPv4 or hostname>` | Resolves a hostname with DNS when needed, then sends one ICMP echo request |
-| `curl` | `curl [-o file] [-I] [-i] [-L] [-f] [-X method] http://<host>/<path>` | Fetches a plain HTTP response; body prints by default, `-o` saves to RAMFS or persistent `/home/`, `-I` requests headers, `-i` includes headers, `-L` follows up to 5 redirects, `-f` errors on HTTP status 400+, and `-X` selects a method |
+| `curl` | `curl [-o file\|-O] [-d data] [-H header] [-X method] http://<host>/<path>` | Sends plain HTTP GET or custom-method requests, saves downloads with `-o` or `-O`, supports POST data and request headers, HEAD, included response headers, redirects, and failure on HTTP errors. See the examples above. |
 | `meminfo` | `meminfo` | Displays total heap capacity, used bytes, free bytes, and blocks |
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |
