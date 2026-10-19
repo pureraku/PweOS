@@ -1,6 +1,6 @@
 [package]
 name = "pweos"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A lightweight 32-bit x86 educational operating system ported to Rust"
 

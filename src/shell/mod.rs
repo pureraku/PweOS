@@ -21,7 +21,7 @@ use crate::fs::ramfs::{
 };
 use crate::mm::heap::heap_get_stats;
 
-pub const PWEOS_VERSION: &str = "0.1.1";
+pub const PWEOS_VERSION: &str = "0.1.2";
 const SHELL_HISTORY_MAX: usize = 16;
 
 struct ShellHistory {

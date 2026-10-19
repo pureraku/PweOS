@@ -5,7 +5,7 @@ PweOS is a minimal, educational 32-bit x86 operating system featuring a custom B
 ```text
        ____              pweos@pweos
       |  _ \             ----------------
-      | |_) |            OS: PweOS 0.1.1
+      | |_) |            OS: PweOS 0.1.2
       |  __/             Arch: i686
       |_|                Kernel: Rust (no_std)
                          Shell: PweOS
