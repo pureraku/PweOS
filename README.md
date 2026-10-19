@@ -1,6 +1,6 @@
 # PweOS
+PweOS is a minimal, educational 32-bit x86 operating system featuring a custom BIOS bootloader, a freestanding Rust kernel (`no_std`, `alloc`), a dynamic heap memory allocator implementing Rust's `GlobalAlloc`, interrupt-driven device drivers, an in-memory RAMFS, PweFS-backed persistent storage under `/home/`, and an interactive command shell. It also features a pixel-based framebuffer for 320×200, 256-color RGB332 graphics, image rendering, video playback, and real-time drawing demonstrations, alongside TinyCC-powered C compilation for building and running static i386 ELF programs directly within the OS.
 
-PweOS is a minimal, educational 32-bit x86 operating system featuring a custom BIOS bootloader, freestanding Rust kernel (`no_std`, `alloc`), dynamic heap memory allocator implementing Rust's `GlobalAlloc`, interrupt-driven device drivers, in-memory virtual filesystem, and an interactive command shell.
 
 ```text
        ____              pweos@pweos
@@ -11,7 +11,7 @@ PweOS is a minimal, educational 32-bit x86 operating system featuring a custom B
                          Shell: PweOS
                          Display: VGA 80x25
                          Memory: 2048 KB heap
-                         Filesystem: RAMFS
+                         Filesystem: RAMFS + PweFS
                          Compiler: TinyCC (i386)
                          CPU mode: 32-bit protected mode
 
@@ -30,8 +30,8 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 |                     PweOS Interactive Shell                 |
 |       (Line editing, command history, arrow navigation)     |
 +-------------------------------------------------------------+
-|               RAMFS In-Memory Virtual Filesystem            |
-|       (Dynamically allocated files, cat, touch, write, rm)   |
+|          RAMFS + PweFS Virtual Filesystems                   |
+| RAMFS for system files; persistent PweFS storage under /home |
 +-------------------------------------------------------------+
 |                  Dynamic Heap Memory Allocator              |
 |   (kmalloc/kfree, block coalescing, GlobalAlloc for alloc)  |
@@ -71,10 +71,12 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - Implements Rust's `core::alloc::GlobalAlloc` trait, enabling full use of the standard `alloc` crate (`String`, `Vec`, `Box`, `format!`).
 - Provides live memory diagnostics via `meminfo`.
 
-### 4. RAMFS Virtual Filesystem (`src/fs/ramfs.rs`)
-- Dynamic in-memory virtual filesystem backed by the heap.
-- Supports file creation, resizing, reading, appending, and deletion.
-- Prepopulated with default text files, an `/images/` directory for RGB332 stills, and a `/videos/` directory for PweOS video clips stored on a companion data disk.
+### 4. Filesystems (`src/fs/ramfs.rs`, `src/fs/pwefs.rs`)
+- **RAMFS** is a dynamic in-memory filesystem backed by the heap. It holds default system files, bundled assets, and runtime files outside `/home/`; RAMFS contents are lost on reboot.
+- **PweFS** uses the secondary IDE storage disk for persistent user data. The kernel attempts to initialize or mount it automatically during filesystem startup; users do not need a manual `pfs format` or `pfs mount` command.
+- **`/home/` is the persistent user-data location.** Files created there are stored on PweFS and are intended to survive reboot. The current PweFS directory-table format supports file and directory entries, including nested paths, subject to its path-length and directory-table limits.
+- PweFS only auto-formats a completely blank storage disk. If the disk is nonblank but its filesystem metadata is invalid, initialization should report an error rather than automatically formatting it.
+- `/images/` contains bundled RGB332 stills, `/videos/` exposes video clips from the companion data disk, and `/bin/` exposes bundled programs as read-only disk-backed files.
 
 ### 5. VGA Text Console & Serial Driver (`src/drivers/vga.rs`, `src/drivers/serial.rs`)
 - Memory-mapped text buffer at physical address `0xB8000` (80 columns x 25 rows).
@@ -98,7 +100,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **PIT 8253 Timer (`timer.rs`)**: Channel 0 timer running at 100 Hz on IRQ0, tracking system ticks, elapsed uptime, and supporting `timer_sleep()`.
 - **PS/2 Keyboard (`keyboard.rs`)**: Decodes Scancode Set 1 on IRQ1 with extended key prefix `0xE0` support for arrow keys (Up, Down, Left, Right). Handles Shift and Caps Lock, buffers keystrokes in a thread-safe ring buffer, and supports headless ANSI serial input from COM1.
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
-- **ATA PIO (`ata.rs`)**: Reads video assets and user programs from the companion primary-master IDE disk without loading them into the kernel image.
+- **ATA PIO (`ata.rs`)**: Provides sector access to IDE disks. The primary-master companion data disk supplies video assets and user programs; the primary-slave storage disk backs persistent PweFS data under `/home/`.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
 
 ### 8. Interactive Shell (`src/shell/`)
@@ -143,6 +145,27 @@ Hello from PweOS!
 
 ---
 
+## Persistent User Storage
+
+PweOS reserves `/home/` for persistent user files and directories. PweFS is initialized automatically during startup when the storage disk is available.
+
+```text
+pweos> mkdir /home/prerak
+pweos> write /home/prerak/hello.txt Hello from PweOS!
+pweos> mkdir /home/prerak/projects
+pweos> write /home/prerak/projects/todo.txt Build PweOS
+pweos> ls /home/prerak
+pweos> cat /home/prerak/hello.txt
+```
+
+Files and directories saved under `/home/` are intended to survive reboot. Other ordinary RAMFS files are temporary. Bundled `/bin/` programs and `/videos/` assets remain on the companion data disk and are exposed read-only by the filesystem layer.
+
+There is no user-facing `pfs` shell command: normal startup handles mounting or initializing storage. A completely blank storage disk may be initialized automatically. Nonblank storage with invalid metadata should not be automatically reformatted. Keep the storage image (`build/storage.img`) intact when rebuilding if you want to preserve user data.
+
+PweFS uses a fixed on-disk directory table, so the number of entries and path length are limited. If storage initialization fails, the kernel reports that persistent storage is unavailable; RAMFS can still provide the system's in-memory files.
+
+---
+
 ## Builtin Shell Commands
 
 | Command | Syntax | Description |
@@ -157,9 +180,9 @@ Hello from PweOS!
 | `meminfo` | `meminfo` | Displays total heap capacity, used bytes, free bytes, and blocks |
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |
-| `mkdir` | `mkdir <path>` | Creates a directory under an existing parent directory |
+| `mkdir` | `mkdir <path>` | Creates a directory under an existing parent directory; directories under `/home/` are stored persistently |
 | `rmdir` | `rmdir <path>` | Removes an empty directory |
-| `nuke` | `nuke <path>` | Recursively removes a file or directory and its contents; protects the root, current directory, and mounted `/bin` and `/videos` directories |
+| `nuke` | `nuke <path>` | Recursively removes a file or directory and its contents; protects the root, current directory, and mounted `/bin`, `/videos`, and `/home` mount points |
 | `cd` | `cd <path>` | Changes the working directory; supports `..` and absolute paths |
 | `pwd` | `pwd` | Prints the current working directory |
 | `cat` | `cat [file...]` | Writes file contents or piped input to standard output; bundled user program |
@@ -170,12 +193,12 @@ Hello from PweOS!
 | `video` | `video <path>` | Plays a bundled `.pwevid` clip, e.g. `/videos/demo.pwevid`; press any key to stop and return to the shell |
 | `cube` | `cube` | Shows a spinning colored wireframe cube; press any key to return to the shell |
 | `grep` | `grep <text> [file...]` | Prints matching lines from files or piped input; bundled user program |
-| `touch` | `touch <filename>` | Creates an empty file in RAMFS |
-| `write` | `write <filename> <text>` | Replaces a file with one line of text |
-| `edit` | `edit [path]` | Opens a multiline editor; Tab inserts four spaces, Escape saves, and piped text prompts for a save path |
+| `touch` | `touch <filename>` | Creates an empty file; files under `/home/` are persistent, while other writable paths use RAMFS |
+| `write` | `write <filename> <text>` | Replaces a file with one line of text; files under `/home/` are persistent |
+| `edit` | `edit [path]` | Opens a multiline editor; Tab inserts four spaces, Escape saves, and piped text prompts for a save path. Save under `/home/` for persistence |
 | `vi` | `vi <path>` | Opens the bundled user-mode vi-style editor: `h/j/k/l` move, `i` inserts, `o/O` open lines, `x` and `dd` delete, `Esc` returns to normal mode, and `:w`, `:q`, `:q!`, `:wq` save or quit |
 | `less` | `less [path]` | Views a file or piped text without editing; arrows navigate and `q` or Escape exits |
-| `rm` | `rm <filename>` | Deletes a file from RAMFS and reclaims memory |
+| `rm` | `rm <filename>` | Deletes a file; files under `/home/` are deleted from persistent storage |
 | `calc` | `calc <a> <op> <b>` | Performs arithmetic: `+`, `-`, `*`, `/`, `%` with div-by-zero protection; bundled user program |
 | `color` | `color <fg> [bg]` | Changes console foreground and optional background color |
 | `sleep` | `sleep <seconds>` | Delays execution for N seconds using timer interrupts |
@@ -235,7 +258,8 @@ PweOS/
     │   └── vga.rs           # VGA 80x25 text mode & hardware cursor
     ├── fs/
     │   ├── mod.rs           # Filesystem module root
-    │   └── ramfs.rs         # Dynamic RAM virtual filesystem
+    │   ├── ramfs.rs         # Dynamic RAM virtual filesystem and /home routing
+    │   └── pwefs.rs         # Persistent filesystem backing /home
     ├── mm/
     │   ├── mod.rs           # Memory management module root
     │   └── heap.rs          # Dynamic kernel heap allocator & GlobalAlloc
