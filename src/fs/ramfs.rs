@@ -191,6 +191,13 @@ include!(concat!(env!("OUT_DIR"), "/bundled_images.rs"));
 include!(concat!(env!("OUT_DIR"), "/bundled_tcc.rs"));
 
 pub fn ramfs_init() {
+    match crate::fs::pwefs::pwefs_init() {
+        Ok(()) => {}
+        Err(error) => {
+            crate::println!("PweFS: persistent storage unavailable: {}", error);
+        }
+    }
+
     let mut fs = RAMFS.lock();
     fs.files.clear();
     fs.directories.clear();
@@ -215,6 +222,7 @@ pub fn ramfs_init() {
             "#
             );
 
+    fs.create_dir("home");
     fs.create_dir("images");
     for &(name, data) in BUNDLED_IMAGES {
         let mut path = String::from("images/");
@@ -235,47 +243,92 @@ pub fn ramfs_init() {
 }
 
 pub fn ramfs_create(name: &str, initial_data: &[u8]) -> bool {
-    if disk_program_metadata(name).is_some() {
-        return false;
+    let name = name.strip_prefix('/').unwrap_or(name);
+
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name)
+            || crate::fs::pwefs::pwefs_exists(persistent_name)
+        {
+            return false;
+        }
+        return crate::fs::pwefs::pwefs_write(persistent_name, initial_data).is_ok();
     }
+
     RAMFS.lock().create(name, initial_data)
 }
 
 pub fn ramfs_create_dir(name: &str) -> bool {
+    let name = name.strip_prefix('/').unwrap_or(name);
+
+    // /home is a protected mount point.
+    if name == "home" {
+        return false;
+    }
+
+    // Directories inside /home are stored persistently by PweFS.
+    if let Some(path) = name.strip_prefix("home/") {
+        return crate::fs::pwefs::pwefs_create_dir(path).is_ok();
+    }
+
     RAMFS.lock().create_dir(name)
 }
 
 pub fn ramfs_delete_dir(path: &str) -> bool {
-    if is_disk_mount(path) || ramfs_count_in(path) != 0 {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    if is_disk_mount(path) {
+        return false;
+    }
+    if let Some(persistent_path) = path.strip_prefix("home/") {
+        return crate::fs::pwefs::pwefs_delete_dir(persistent_path).is_ok();
+    }
+    if ramfs_count_in(path) != 0 {
         return false;
     }
     RAMFS.lock().delete_dir(path)
 }
 
 pub fn ramfs_nuke(path: &str) -> bool {
+    let path = path.strip_prefix('/').unwrap_or(path);
     if is_disk_mount(path) {
         return false;
+    }
+    if let Some(persistent_path) = path.strip_prefix("home/") {
+        return crate::fs::pwefs::pwefs_nuke(persistent_path).is_ok();
     }
     RAMFS.lock().nuke(path)
 }
 
 pub fn ramfs_read(name: &str) -> Option<Vec<u8>> {
     let name = name.strip_prefix('/').unwrap_or(name);
+
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return None;
+        }
+        return crate::fs::pwefs::pwefs_read(persistent_name).ok();
+    }
+
     if let Some(data) = RAMFS.lock().read(name) {
         return Some(data);
     }
     let (start_sector, byte_len) = disk_program_metadata(name)?;
-    let sector_count = (byte_len as usize).div_ceil(512);
+    let sector_count = byte_len.div_ceil(512);
     let mut data = Vec::new();
     data.try_reserve_exact(sector_count * 512).ok()?;
     data.resize(sector_count * 512, 0);
     crate::drivers::disk::read_sectors(start_sector, sector_count, &mut data).ok()?;
-    data.truncate(byte_len as usize);
+    data.truncate(byte_len);
     Some(data)
 }
 
 pub fn ramfs_file_len(name: &str) -> Option<usize> {
     let name = name.strip_prefix('/').unwrap_or(name);
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return None;
+        }
+        return crate::fs::pwefs::pwefs_file_len(persistent_name);
+    }
     RAMFS
         .lock()
         .find(name)
@@ -285,10 +338,22 @@ pub fn ramfs_file_len(name: &str) -> Option<usize> {
 
 pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usize> {
     let name = name.strip_prefix('/').unwrap_or(name);
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return None;
+        }
+        let contents = crate::fs::pwefs::pwefs_read(persistent_name).ok()?;
+        if offset >= contents.len() || output.is_empty() {
+            return Some(0);
+        }
+        let count = output.len().min(contents.len() - offset);
+        output[..count].copy_from_slice(&contents[offset..offset + count]);
+        return Some(count);
+    }
     {
         let fs = RAMFS.lock();
         if let Some(node) = fs.find(name) {
-            if offset >= node.data.len() {
+            if offset >= node.data.len() || output.is_empty() {
                 return Some(0);
             }
             let count = output.len().min(node.data.len() - offset);
@@ -301,20 +366,74 @@ pub fn ramfs_read_at(name: &str, offset: usize, output: &mut [u8]) -> Option<usi
 }
 
 pub fn ramfs_write_at(name: &str, offset: usize, data: &[u8], truncate: bool) -> bool {
+    let name = name.strip_prefix('/').unwrap_or(name);
     if disk_program_metadata(name).is_some() {
         return false;
+    }
+
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return false;
+        }
+        let exists = crate::fs::pwefs::pwefs_exists(persistent_name);
+        let mut contents = match crate::fs::pwefs::pwefs_read(persistent_name) {
+            Ok(contents) => contents,
+            Err(_) if !exists && offset == 0 => Vec::new(),
+            Err(_) => return false,
+        };
+        if truncate {
+            contents.clear();
+        }
+        let Some(end) = offset.checked_add(data.len()) else { return false };
+        if end > contents.len() {
+            if contents.try_reserve(end - contents.len()).is_err() {
+                return false;
+            }
+            contents.resize(end, 0);
+        }
+        contents[offset..end].copy_from_slice(data);
+        return crate::fs::pwefs::pwefs_write(persistent_name, &contents).is_ok();
     }
     RAMFS.lock().write_at(name, offset, data, truncate)
 }
 
 pub fn ramfs_write(name: &str, data: &[u8], append: bool) -> bool {
+    let name = name.strip_prefix('/').unwrap_or(name);
     if disk_program_metadata(name).is_some() {
         return false;
+    }
+
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return false;
+        }
+        let contents = if append {
+            let mut contents = if crate::fs::pwefs::pwefs_exists(persistent_name) {
+                match crate::fs::pwefs::pwefs_read(persistent_name) {
+                    Ok(contents) => contents,
+                    Err(_) => return false,
+                }
+            } else {
+                Vec::new()
+            };
+            contents.extend_from_slice(data);
+            contents
+        } else {
+            data.to_vec()
+        };
+        return crate::fs::pwefs::pwefs_write(persistent_name, &contents).is_ok();
     }
     RAMFS.lock().write(name, data, append)
 }
 
 pub fn ramfs_delete(name: &str) -> bool {
+    let name = name.strip_prefix('/').unwrap_or(name);
+    if let Some(persistent_name) = name.strip_prefix("home/") {
+        if !valid_persistent_name(persistent_name) {
+            return false;
+        }
+        return crate::fs::pwefs::pwefs_delete(persistent_name).is_ok();
+    }
     RAMFS.lock().delete(name)
 }
 
@@ -323,13 +442,26 @@ pub fn ramfs_count() -> usize {
         + VIDEO_FILES.len()
         + USER_PROGRAM_DISK.len()
         + usize::from(TCC_PROGRAM_DISK.is_some())
+        + crate::fs::pwefs::pwefs_count()
 }
 
 pub fn ramfs_is_dir(path: &str) -> bool {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    if path == "home" { return true; }
+    if let Some(persistent_path) = path.strip_prefix("home/") {
+        return crate::fs::pwefs::pwefs_is_dir(persistent_path);
+    }
     RAMFS.lock().dir_exists(path)
 }
 
 pub fn ramfs_count_in(path: &str) -> usize {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    if path == "home" {
+        return crate::fs::pwefs::pwefs_count_in("");
+    }
+    if let Some(persistent_path) = path.strip_prefix("home/") {
+        return crate::fs::pwefs::pwefs_count_in(persistent_path);
+    }
     let count = RAMFS.lock().count_in(path);
     match path {
         "videos" => count + VIDEO_FILES.len(),
@@ -346,7 +478,16 @@ pub fn ramfs_video_metadata(name: &str) -> Option<(u32, usize)> {
 }
 
 pub fn ramfs_list<F: FnMut(&str, usize, bool)>(path: &str, cb: F) {
+    let path = path.strip_prefix('/').unwrap_or(path);
     let mut callback = cb;
+    if path == "home" {
+        crate::fs::pwefs::pwefs_list_in("", |name, size, is_dir| callback(name, size, is_dir));
+        return;
+    }
+    if let Some(persistent_path) = path.strip_prefix("home/") {
+        crate::fs::pwefs::pwefs_list_in(persistent_path, |name, size, is_dir| callback(name, size, is_dir));
+        return;
+    }
     RAMFS.lock().list(path, &mut callback);
     if path == "videos" {
         for &(name, _, size) in VIDEO_FILES {
@@ -375,7 +516,13 @@ fn disk_program_metadata(path: &str) -> Option<(u32, usize)> {
 }
 
 fn is_disk_mount(path: &str) -> bool {
-    matches!(path, "bin" | "videos")
+    matches!(path, "bin" | "videos" | "home")
+}
+
+fn valid_persistent_name(name: &str) -> bool {
+    !name.is_empty() && name.len() < 256
+        && name.split('/').all(|part| !part.is_empty() && part.len() < 32
+            && part != "." && part != ".." && !part.contains('\\') && !part.contains('\0'))
 }
 
 fn read_disk_file_at(

@@ -1,5 +1,4 @@
 extern crate alloc;
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::drivers::ata::{read_storage, write_storage};
@@ -7,419 +6,257 @@ use crate::sync::Spinlock;
 
 const SECTOR_SIZE: usize = 512;
 const MAGIC: &[u8; 8] = b"PWEFS001";
-
 const TOTAL_SECTORS: u32 = 16 * 1024 * 1024 / 512;
-const SUPERBLOCK_SECTOR: u32 = 0;
 const DIRECTORY_START: u32 = 1;
 const DIRECTORY_SECTORS: u32 = 8;
 const DATA_START: u32 = DIRECTORY_START + DIRECTORY_SECTORS;
-
 const ENTRY_SIZE: usize = 64;
 const NAME_SIZE: usize = 32;
-const MAX_FILES: usize = DIRECTORY_SECTORS as usize * SECTOR_SIZE / ENTRY_SIZE;
-
-const ENTRY_USED: u8 = 1;
+const MAX_ENTRIES: usize = DIRECTORY_SECTORS as usize * SECTOR_SIZE / ENTRY_SIZE;
+const ENTRY_FILE: u8 = 1;
+const ENTRY_DIR: u8 = 2;
 
 #[derive(Clone)]
-struct FileEntry {
-    name: String,
-    size: u32,
-    start_sector: u32,
-    sectors: u32,
-}
+struct FileEntry { name: String, size: u32, start_sector: u32, sectors: u32 }
+#[derive(Clone)]
+struct DirEntry { path: String }
 
-pub struct PweFs {
-    mounted: bool,
-    files: Vec<FileEntry>,
-}
+pub struct PweFs { mounted: bool, files: Vec<FileEntry>, directories: Vec<DirEntry> }
 
 impl PweFs {
     pub const fn new() -> Self {
-        Self {
-            mounted: false,
-            files: Vec::new(),
-        }
+        Self { mounted: false, files: Vec::new(), directories: Vec::new() }
     }
+    pub fn is_mounted(&self) -> bool { self.mounted }
 
-    pub fn is_mounted(&self) -> bool {
-        self.mounted
-    }
-
-    /// Explicitly initialize the filesystem.
-    /// WARNING: this destroys the existing filesystem metadata.
     pub fn format(&mut self) -> Result<(), &'static str> {
-        let mut superblock = [0u8; SECTOR_SIZE];
-
-        superblock[..8].copy_from_slice(MAGIC);
-        superblock[8..12].copy_from_slice(&1u32.to_le_bytes());
-        superblock[12..16].copy_from_slice(&TOTAL_SECTORS.to_le_bytes());
-        superblock[16..20].copy_from_slice(&DATA_START.to_le_bytes());
-
-        write_storage(SUPERBLOCK_SECTOR, 1, &superblock)?;
-
-        let empty_directory = [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
-
-        write_storage(
-            DIRECTORY_START,
-            DIRECTORY_SECTORS as usize,
-            &empty_directory,
-        )?;
-
-        self.files.clear();
-        self.mounted = true;
-
+        let mut sb = [0u8; SECTOR_SIZE];
+        sb[..8].copy_from_slice(MAGIC);
+        sb[8..12].copy_from_slice(&1u32.to_le_bytes());
+        sb[12..16].copy_from_slice(&TOTAL_SECTORS.to_le_bytes());
+        sb[16..20].copy_from_slice(&DATA_START.to_le_bytes());
+        write_storage(0, 1, &sb)?;
+        let empty = [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
+        write_storage(DIRECTORY_START, DIRECTORY_SECTORS as usize, &empty)?;
+        self.files.clear(); self.directories.clear(); self.mounted = true;
         Ok(())
     }
 
-    /// Mount and validate an existing filesystem.
     pub fn mount(&mut self) -> Result<(), &'static str> {
-        let mut superblock = [0u8; SECTOR_SIZE];
-        read_storage(SUPERBLOCK_SECTOR, 1, &mut superblock)?;
-
-        if &superblock[..8] != MAGIC {
-            self.mounted = false;
-            return Err("PweFS not formatted");
+        let mut sb = [0u8; SECTOR_SIZE];
+        read_storage(0, 1, &mut sb)?;
+        if &sb[..8] != MAGIC { self.mounted = false; return Err("PweFS not formatted"); }
+        let version = read_u32(&sb, 8);
+        let total = read_u32(&sb, 12);
+        let data_start = read_u32(&sb, 16);
+        if version != 1 || total != TOTAL_SECTORS || data_start != DATA_START {
+            self.mounted = false; return Err("invalid PweFS superblock");
         }
-
-        let version = u32::from_le_bytes([
-            superblock[8],
-            superblock[9],
-            superblock[10],
-            superblock[11],
-        ]);
-
-        let total_sectors = u32::from_le_bytes([
-            superblock[12],
-            superblock[13],
-            superblock[14],
-            superblock[15],
-        ]);
-
-        let data_start = u32::from_le_bytes([
-            superblock[16],
-            superblock[17],
-            superblock[18],
-            superblock[19],
-        ]);
-
-        if version != 1
-            || total_sectors != TOTAL_SECTORS
-            || data_start != DATA_START
-        {
-            self.mounted = false;
-            return Err("invalid PweFS superblock");
+        let mut table = [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
+        read_storage(DIRECTORY_START, DIRECTORY_SECTORS as usize, &mut table)?;
+        self.files.clear(); self.directories.clear();
+        for slot in table.chunks_exact(ENTRY_SIZE) {
+            match slot[0] {
+                0 => continue,
+                ENTRY_FILE => {
+                    let name = decode_name(&slot[1..33])?;
+                    if !valid_path(&name) { return self.mount_error("invalid filename"); }
+                    let size = read_u32(slot, 33);
+                    let start = read_u32(slot, 37);
+                    let sectors = read_u32(slot, 41);
+                    if (sectors == 0 && size != 0) || start < DATA_START
+                        || start.checked_add(sectors).filter(|&e| e <= TOTAL_SECTORS).is_none()
+                        || size > sectors.saturating_mul(SECTOR_SIZE as u32) {
+                        return self.mount_error("invalid file allocation");
+                    }
+                    if self.files.iter().any(|f| f.name == name) || self.directories.iter().any(|d| d.path == name) {
+                        return self.mount_error("duplicate path");
+                    }
+                    self.files.push(FileEntry { name, size, start_sector: start, sectors });
+                }
+                ENTRY_DIR => {
+                    let path = decode_name(&slot[1..33])?;
+                    if !valid_path(&path) { return self.mount_error("invalid directory path"); }
+                    if self.directories.iter().any(|d| d.path == path) || self.files.iter().any(|f| f.name == path) {
+                        return self.mount_error("duplicate path");
+                    }
+                    self.directories.push(DirEntry { path });
+                }
+                _ => return self.mount_error("unknown directory entry"),
+            }
         }
-
-        let mut directory =
-            [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
-
-        read_storage(
-            DIRECTORY_START,
-            DIRECTORY_SECTORS as usize,
-            &mut directory,
-        )?;
-
-        self.files.clear();
-
-        for slot in directory.chunks_exact(ENTRY_SIZE) {
-            if slot[0] != ENTRY_USED {
-                continue;
+        for path in self.files.iter().map(|f| f.name.as_str())
+            .chain(self.directories.iter().map(|d| d.path.as_str())) {
+            let parent = parent_path(path);
+            if !parent.is_empty() && !self.directories.iter().any(|d| d.path == parent) {
+                return self.mount_error("parent directory missing");
             }
-
-            let name_end = slot[1..1 + NAME_SIZE]
-                .iter()
-                .position(|&byte| byte == 0)
-                .unwrap_or(NAME_SIZE);
-
-            let name = core::str::from_utf8(&slot[1..1 + name_end])
-                .map_err(|_| "invalid filename encoding")?;
-
-            if !valid_name(name) {
-                self.mounted = false;
-                self.files.clear();
-                return Err("invalid filename in directory");
-            }
-
-            let size = u32::from_le_bytes([
-                slot[33], slot[34], slot[35], slot[36],
-            ]);
-
-            let start_sector = u32::from_le_bytes([
-                slot[37], slot[38], slot[39], slot[40],
-            ]);
-
-            let sectors = u32::from_le_bytes([
-                slot[41], slot[42], slot[43], slot[44],
-            ]);
-
-            if sectors == 0 && size != 0 {
-                self.mounted = false;
-                self.files.clear();
-                return Err("invalid file allocation");
-            }
-
-            if start_sector < DATA_START
-                || start_sector
-                    .checked_add(sectors)
-                    .filter(|&end| end <= TOTAL_SECTORS)
-                    .is_none()
-                || size > sectors.saturating_mul(SECTOR_SIZE as u32)
-            {
-                self.mounted = false;
-                self.files.clear();
-                return Err("file allocation is outside the disk");
-            }
-
-            if self.files.iter().any(|file| file.name == name) {
-                self.mounted = false;
-                self.files.clear();
-                return Err("duplicate filename in directory");
-            }
-
-            self.files.push(FileEntry {
-                name: String::from(name),
-                size,
-                start_sector,
-                sectors,
-            });
         }
-
-        self.mounted = true;
-        Ok(())
+        self.mounted = true; Ok(())
     }
 
-    pub fn list<F: FnMut(&str, usize)>(&self, mut callback: F) {
-        if !self.mounted {
-            return;
-        }
-
-        for file in &self.files {
-            callback(file.name.as_str(), file.size as usize);
-        }
+    fn mount_error<T>(&mut self, message: &'static str) -> Result<T, &'static str> {
+        self.mounted = false; self.files.clear(); self.directories.clear(); Err(message)
     }
 
+    pub fn list<F: FnMut(&str, usize)>(&self, mut cb: F) {
+        self.list_in("", |name, size, dir| { if !dir { cb(name, size); } });
+    }
+    pub fn list_in<F: FnMut(&str, usize, bool)>(&self, path: &str, mut cb: F) {
+        if !self.mounted { return; }
+        for d in &self.directories { if parent_path(&d.path) == path { cb(base_name(&d.path), 0, true); } }
+        for f in &self.files { if parent_path(&f.name) == path { cb(base_name(&f.name), f.size as usize, false); } }
+    }
     pub fn read(&self, name: &str) -> Result<Vec<u8>, &'static str> {
         self.ensure_mounted()?;
-
-        let file = self.files.iter()
-            .find(|file| file.name == name)
-            .ok_or("file not found")?;
-
+        let f = self.files.iter().find(|f| f.name == name).ok_or("file not found")?;
         let mut data = Vec::new();
-        data.try_reserve_exact(file.size as usize)
-            .map_err(|_| "not enough memory")?;
-
-        if file.size == 0 {
-            return Ok(data);
-        }
-
-        let padded_size = file.sectors as usize * SECTOR_SIZE;
-
-        data.resize(padded_size, 0);
-
-        read_storage(file.start_sector, file.sectors as usize, &mut data)?;
-
-        data.truncate(file.size as usize);
-
-        Ok(data)
+        data.try_reserve_exact(f.sectors as usize * SECTOR_SIZE).map_err(|_| "not enough memory")?;
+        data.resize(f.sectors as usize * SECTOR_SIZE, 0);
+        if f.sectors > 0 { read_storage(f.start_sector, f.sectors as usize, &mut data)?; }
+        data.truncate(f.size as usize); Ok(data)
     }
-
     pub fn write(&mut self, name: &str, data: &[u8]) -> Result<(), &'static str> {
         self.ensure_mounted()?;
-
-        if !valid_name(name) {
-            return Err("invalid filename");
+        if !valid_path(name) || name.len() > NAME_SIZE { return Err("invalid path (max 32 bytes)"); }
+        let parent = parent_path(name);
+        if !parent.is_empty() && !self.directories.iter().any(|d| d.path == parent) {
+            return Err("parent directory does not exist");
         }
-
-        if data.len() > u32::MAX as usize {
-            return Err("file is too large");
-        }
-
-        let sectors = data.len().div_ceil(SECTOR_SIZE);
-        let sectors_u32 = sectors as u32;
-
-        let existing = self.files.iter().position(|file| file.name == name);
-
-        if existing.is_none() && self.files.len() >= MAX_FILES {
-            return Err("directory is full");
-        }
-
-        let start_sector = if let Some(index) = existing {
-            let file = &self.files[index];
-
-            if sectors_u32 <= file.sectors {
-                file.start_sector
-            } else {
-                self.find_free_run(sectors_u32, Some(index))?
-            }
-        } else {
-            self.find_free_run(sectors_u32, None)?
-        };
-
+        if self.directories.iter().any(|d| d.path == name) { return Err("path is a directory"); }
+        if data.len() > u32::MAX as usize { return Err("file too large"); }
+        let sectors = data.len().div_ceil(SECTOR_SIZE) as u32;
+        let existing = self.files.iter().position(|f| f.name == name);
+        if existing.is_none() && self.files.len() + self.directories.len() >= MAX_ENTRIES { return Err("directory table full"); }
+        let start = if let Some(i) = existing {
+            if sectors <= self.files[i].sectors { self.files[i].start_sector } else { self.find_free_run(sectors, Some(i))? }
+        } else { self.find_free_run(sectors, None)? };
         if sectors > 0 {
             let mut padded = Vec::new();
-
-            padded.try_reserve_exact(sectors * SECTOR_SIZE)
-                .map_err(|_| "not enough memory")?;
-
-            padded.resize(sectors * SECTOR_SIZE, 0);
-            padded[..data.len()].copy_from_slice(data);
-
-            write_storage(start_sector, sectors, &padded)?;
+            padded.try_reserve_exact(sectors as usize * SECTOR_SIZE).map_err(|_| "not enough memory")?;
+            padded.resize(sectors as usize * SECTOR_SIZE, 0); padded[..data.len()].copy_from_slice(data);
+            write_storage(start, sectors as usize, &padded)?;
         }
-
-        let new_entry = FileEntry {
-            name: String::from(name),
-            size: data.len() as u32,
-            start_sector,
-            sectors: sectors_u32,
-        };
-
-        if let Some(index) = existing {
-            self.files[index] = new_entry;
-        } else {
-            self.files.push(new_entry);
-        }
-
+        let entry = FileEntry { name: String::from(name), size: data.len() as u32, start_sector: start, sectors };
+        if let Some(i) = existing { self.files[i] = entry; } else { self.files.push(entry); }
         self.save_directory()
     }
-
+    pub fn create_dir(&mut self, path: &str) -> Result<(), &'static str> {
+        self.ensure_mounted()?;
+        if !valid_path(path) || path.len() > NAME_SIZE { return Err("invalid directory path (max 32 bytes)"); }
+        if self.files.iter().any(|f| f.name == path) || self.directories.iter().any(|d| d.path == path) {
+            return Err("file or directory already exists");
+        }
+        let parent = parent_path(path);
+        if !parent.is_empty() && !self.directories.iter().any(|d| d.path == parent) {
+            return Err("parent directory does not exist");
+        }
+        if self.files.len() + self.directories.len() >= MAX_ENTRIES { return Err("directory table full"); }
+        self.directories.push(DirEntry { path: String::from(path) });
+        if let Err(e) = self.save_directory() { self.directories.pop(); return Err(e); }
+        Ok(())
+    }
+    pub fn is_dir(&self, path: &str) -> bool {
+        self.mounted && (path.is_empty() || self.directories.iter().any(|d| d.path == path))
+    }
+    pub fn count_in(&self, path: &str) -> usize {
+        self.directories.iter().filter(|d| parent_path(&d.path) == path).count()
+            + self.files.iter().filter(|f| parent_path(&f.name) == path).count()
+    }
+    pub fn count(&self) -> usize { self.files.len() + self.directories.len() }
     pub fn delete(&mut self, name: &str) -> Result<(), &'static str> {
         self.ensure_mounted()?;
-
-        let index = self.files.iter()
-            .position(|file| file.name == name)
-            .ok_or("file not found")?;
-
-        self.files.remove(index);
-
+        let i = self.files.iter().position(|f| f.name == name).ok_or("file not found")?;
+        self.files.remove(i); self.save_directory()
+    }
+    pub fn delete_dir(&mut self, path: &str) -> Result<(), &'static str> {
+        self.ensure_mounted()?;
+        if self.count_in(path) != 0 { return Err("directory is not empty"); }
+        let i = self.directories.iter().position(|d| d.path == path).ok_or("directory not found")?;
+        self.directories.remove(i); self.save_directory()
+    }
+    pub fn nuke(&mut self, path: &str) -> Result<(), &'static str> {
+        self.ensure_mounted()?;
+        if path.is_empty() { return Err("invalid path"); }
+        let exists = self.files.iter().any(|f| f.name == path) || self.directories.iter().any(|d| d.path == path);
+        if !exists { return Err("path not found"); }
+        let mut prefix = String::from(path); prefix.push('/');
+        self.files.retain(|f| f.name != path && !f.name.starts_with(&prefix));
+        self.directories.retain(|d| d.path != path && !d.path.starts_with(&prefix));
         self.save_directory()
     }
-
     fn ensure_mounted(&self) -> Result<(), &'static str> {
-        if self.mounted {
-            Ok(())
-        } else {
-            Err("PweFS is not mounted")
-        }
+        if self.mounted { Ok(()) } else { Err("PweFS is not mounted") }
     }
-
-    fn find_free_run(
-        &self,
-        needed: u32,
-        ignore_index: Option<usize>,
-    ) -> Result<u32, &'static str> {
-        if needed == 0 {
-            return Ok(DATA_START);
-        }
-
+    fn find_free_run(&self, needed: u32, ignore: Option<usize>) -> Result<u32, &'static str> {
+        if needed == 0 { return Ok(DATA_START); }
         let mut candidate = DATA_START;
-
         loop {
-            let end = candidate
-                .checked_add(needed)
-                .ok_or("disk space exhausted")?;
-
-            if end > TOTAL_SECTORS {
-                return Err("disk space exhausted");
+            let end = candidate.checked_add(needed).ok_or("disk space exhausted")?;
+            if end > TOTAL_SECTORS { return Err("disk space exhausted"); }
+            let mut conflict_end = candidate; let mut conflict = false;
+            for (i, f) in self.files.iter().enumerate() {
+                if Some(i) == ignore || f.sectors == 0 { continue; }
+                let fe = f.start_sector.checked_add(f.sectors).ok_or("invalid allocation")?;
+                if candidate < fe && end > f.start_sector { conflict = true; conflict_end = conflict_end.max(fe); }
             }
-
-            let mut conflict_end = candidate;
-            let mut conflict = false;
-
-            for (index, file) in self.files.iter().enumerate() {
-                if Some(index) == ignore_index || file.sectors == 0 {
-                    continue;
-                }
-
-                let file_end = file.start_sector
-                    .checked_add(file.sectors)
-                    .ok_or("invalid file allocation")?;
-
-                if candidate < file_end && end > file.start_sector {
-                    conflict = true;
-                    conflict_end = conflict_end.max(file_end);
-                }
-            }
-
-            if !conflict {
-                return Ok(candidate);
-            }
-
+            if !conflict { return Ok(candidate); }
             candidate = conflict_end;
         }
     }
-
     fn save_directory(&self) -> Result<(), &'static str> {
-        let mut directory =
-            [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
-
-        for (index, file) in self.files.iter().enumerate() {
-            if index >= MAX_FILES {
-                return Err("directory is full");
-            }
-
-            let start = index * ENTRY_SIZE;
-            let slot = &mut directory[start..start + ENTRY_SIZE];
-
-            slot[0] = ENTRY_USED;
-
-            let name_bytes = file.name.as_bytes();
-            if name_bytes.len() > NAME_SIZE {
-                return Err("filename too long");
-            }
-
-            slot[1..1 + name_bytes.len()].copy_from_slice(name_bytes);
-
-            slot[33..37].copy_from_slice(&file.size.to_le_bytes());
-            slot[37..41].copy_from_slice(&file.start_sector.to_le_bytes());
-            slot[41..45].copy_from_slice(&file.sectors.to_le_bytes());
+        let mut table = [0u8; DIRECTORY_SECTORS as usize * SECTOR_SIZE];
+        let mut n = 0;
+        for f in &self.files {
+            if n >= MAX_ENTRIES { return Err("directory table full"); }
+            encode_entry(&mut table[n*ENTRY_SIZE..(n+1)*ENTRY_SIZE], ENTRY_FILE, &f.name, f.size, f.start_sector, f.sectors)?;
+            n += 1;
         }
-
-        write_storage(
-            DIRECTORY_START,
-            DIRECTORY_SECTORS as usize,
-            &directory,
-        )
+        for d in &self.directories {
+            if n >= MAX_ENTRIES { return Err("directory table full"); }
+            encode_entry(&mut table[n*ENTRY_SIZE..(n+1)*ENTRY_SIZE], ENTRY_DIR, &d.path, 0, DATA_START, 0)?;
+            n += 1;
+        }
+        write_storage(DIRECTORY_START, DIRECTORY_SECTORS as usize, &table)
     }
 }
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= NAME_SIZE
-        && name != "."
-        && name != ".."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.as_bytes().contains(&0)
+fn encode_entry(slot: &mut [u8], kind: u8, name: &str, size: u32, start: u32, sectors: u32) -> Result<(), &'static str> {
+    if name.is_empty() || name.len() > NAME_SIZE { return Err("path too long"); }
+    slot.fill(0); slot[0] = kind; slot[1..1+name.len()].copy_from_slice(name.as_bytes());
+    slot[33..37].copy_from_slice(&size.to_le_bytes());
+    slot[37..41].copy_from_slice(&start.to_le_bytes());
+    slot[41..45].copy_from_slice(&sectors.to_le_bytes()); Ok(())
 }
+fn decode_name(bytes: &[u8]) -> Result<String, &'static str> {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    Ok(String::from(core::str::from_utf8(&bytes[..end]).map_err(|_| "invalid path encoding")?))
+}
+fn read_u32(b: &[u8], i: usize) -> u32 { u32::from_le_bytes([b[i], b[i+1], b[i+2], b[i+3]]) }
+fn valid_path(p: &str) -> bool {
+    !p.is_empty() && p.split('/').all(|s| !s.is_empty() && s.len() < 32 && s != "." && s != ".."
+        && !s.contains('\\') && !s.as_bytes().contains(&0))
+}
+fn parent_path(p: &str) -> &str { p.rsplit_once('/').map(|(a, _)| a).unwrap_or("") }
+fn base_name(p: &str) -> &str { p.rsplit('/').next().unwrap_or(p) }
 
 static PWEFS: Spinlock<PweFs> = Spinlock::new(PweFs::new());
-
-pub fn pwefs_format() -> Result<(), &'static str> {
-    PWEFS.lock().format()
+pub fn pwefs_format() -> Result<(), &'static str> { PWEFS.lock().format() }
+pub fn pwefs_mount() -> Result<(), &'static str> { PWEFS.lock().mount() }
+pub fn pwefs_init() -> Result<(), &'static str> {
+    let mut sb = [0u8; SECTOR_SIZE]; read_storage(0, 1, &mut sb)?;
+    if sb.iter().all(|&b| b == 0) { PWEFS.lock().format() } else { PWEFS.lock().mount() }
 }
-
-pub fn pwefs_mount() -> Result<(), &'static str> {
-    PWEFS.lock().mount()
-}
-
-pub fn pwefs_is_mounted() -> bool {
-    PWEFS.lock().is_mounted()
-}
-
-pub fn pwefs_list<F: FnMut(&str, usize)>(callback: F) {
-    PWEFS.lock().list(callback);
-}
-
-pub fn pwefs_read(name: &str) -> Result<Vec<u8>, &'static str> {
-    PWEFS.lock().read(name)
-}
-
-pub fn pwefs_write(name: &str, data: &[u8]) -> Result<(), &'static str> {
-    PWEFS.lock().write(name, data)
-}
-
-pub fn pwefs_delete(name: &str) -> Result<(), &'static str> {
-    PWEFS.lock().delete(name)
-}
+pub fn pwefs_is_mounted() -> bool { PWEFS.lock().is_mounted() }
+pub fn pwefs_list<F: FnMut(&str, usize)>(cb: F) { PWEFS.lock().list(cb); }
+pub fn pwefs_list_in<F: FnMut(&str, usize, bool)>(p: &str, cb: F) { PWEFS.lock().list_in(p, cb); }
+pub fn pwefs_read(n: &str) -> Result<Vec<u8>, &'static str> { PWEFS.lock().read(n) }
+pub fn pwefs_write(n: &str, d: &[u8]) -> Result<(), &'static str> { PWEFS.lock().write(n, d) }
+pub fn pwefs_delete(n: &str) -> Result<(), &'static str> { PWEFS.lock().delete(n) }
+pub fn pwefs_create_dir(p: &str) -> Result<(), &'static str> { PWEFS.lock().create_dir(p) }
+pub fn pwefs_delete_dir(p: &str) -> Result<(), &'static str> { PWEFS.lock().delete_dir(p) }
+pub fn pwefs_nuke(p: &str) -> Result<(), &'static str> { PWEFS.lock().nuke(p) }
+pub fn pwefs_is_dir(p: &str) -> bool { PWEFS.lock().is_dir(p) }
+pub fn pwefs_count_in(p: &str) -> usize { PWEFS.lock().count_in(p) }
+pub fn pwefs_count() -> usize { PWEFS.lock().count() }
+pub fn pwefs_exists(n: &str) -> bool { PWEFS.lock().files.iter().any(|f| f.name == n) }
+pub fn pwefs_file_len(n: &str) -> Option<usize> { PWEFS.lock().files.iter().find(|f| f.name == n).map(|f| f.size as usize) }
