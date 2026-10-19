@@ -35,6 +35,7 @@ pub extern "C" fn kmain() -> ! {
     ramfs_init();
     timer_init(100);
     keyboard_init();
+    let network_available = drivers::network::network_init();
 
     // Enable CPU hardware interrupts
     unsafe {
@@ -51,6 +52,7 @@ pub extern "C" fn kmain() -> ! {
     println!("                         Display: VGA {}x{}", VGA_WIDTH, VGA_HEIGHT);
     println!("                         Memory: {} KB heap", HEAP_INITIAL_SIZE / 1024);
     println!("                         Filesystem: RAMFS");
+    println!("                         Network: {}", if network_available { "RTL8139" } else { "unavailable" });
     println!("                         Compiler: TinyCC (i386)");
     println!("                         CPU mode: 32-bit protected mode\n");
 

@@ -7,3 +7,4 @@ pub mod timer;
 pub mod vga;
 pub mod disk;
 pub mod atapi;
+pub mod network;
