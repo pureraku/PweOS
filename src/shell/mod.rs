@@ -158,7 +158,8 @@ static COMMANDS: &[Command] = &[
         handler: cmd_cpuinfo,
     },
     Command { name: "ifconfig", desc: "Show network adapter and IPv4 configuration", handler: cmd_ifconfig },
-    Command { name: "ping", desc: "Send an IPv4 ICMP echo request: ping a.b.c.d", handler: cmd_ping },
+    Command { name: "ping", desc: "Ping an IPv4 address or DNS hostname", handler: cmd_ping },
+    Command { name: "http", desc: "Fetch a plain HTTP page: http <host> [path]", handler: cmd_http },
     Command {
         name: "meminfo",
         desc: "Display kernel heap memory statistics",
@@ -319,16 +320,41 @@ fn cmd_ifconfig(_args: &[&str]) {
 }
 
 fn cmd_ping(args: &[&str]) {
-    if args.len() != 2 { println!("Usage: ping a.b.c.d"); return; }
-    let mut ip = [0u8; 4]; let mut parts = args[1].split('.');
+    if args.len() != 2 { println!("Usage: ping <IPv4 address or hostname>"); return; }
+    let mut ip = [0u8; 4];
+    let mut numeric = true;
+    let mut parts = args[1].split('.');
     for octet in &mut ip {
-        let Some(part) = parts.next() else { println!("ping: invalid IPv4 address"); return; };
-        let Ok(value) = part.parse::<u8>() else { println!("ping: invalid IPv4 address"); return; };
+        let Some(part) = parts.next() else { numeric = false; break; };
+        let Ok(value) = part.parse::<u8>() else { numeric = false; break; };
         *octet = value;
     }
-    if parts.next().is_some() { println!("ping: invalid IPv4 address"); return; }
+    if parts.next().is_some() { numeric = false; }
+    if !numeric {
+        print!("Resolving {} ... ", args[1]);
+        match network::resolve_ipv4(args[1], 200) {
+            Ok(address) => {
+                ip = address;
+                println!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
+            }
+            Err(error) => { println!("{}", error); return; }
+        }
+    }
     print!("PING {}.{}.{}.{} ... ", ip[0], ip[1], ip[2], ip[3]);
     match network::ping(ip, 200) { Ok(()) => println!("reply received"), Err(error) => println!("{}", error) }
+}
+
+fn cmd_http(args: &[&str]) {
+    if args.len() < 2 || args.len() > 3 { println!("Usage: http <host> [path]"); return; }
+    let path = if args.len() == 3 { args[2] } else { "/" };
+    print!("GET http://{}{} ...\n", args[1], path);
+    match network::http_get(args[1], path, 300) {
+        Ok(response) => match core::str::from_utf8(&response) {
+            Ok(text) => print!("{}", text),
+            Err(_) => println!("Received {} bytes of non-UTF-8 data", response.len()),
+        },
+        Err(error) => println!("http: {}", error),
+    }
 }
 
 fn cmd_clear(_args: &[&str]) {
