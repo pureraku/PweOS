@@ -41,6 +41,7 @@ pub extern "C" fn kmain() -> ! {
     unsafe {
         core::arch::asm!("sti");
     }
+    let dhcp_configured = network_available && drivers::network::dhcp_configure(200);
 
     vga_set_color(VgaColor::LightCyan, VgaColor::Black);
     println!("       ____              pweos@pweos");
@@ -52,7 +53,7 @@ pub extern "C" fn kmain() -> ! {
     println!("                         Display: VGA {}x{}", VGA_WIDTH, VGA_HEIGHT);
     println!("                         Memory: {} KB heap", HEAP_INITIAL_SIZE / 1024);
     println!("                         Filesystem: RAMFS");
-    println!("                         Network: {}", if network_available { "RTL8139" } else { "unavailable" });
+    println!("                         Network: {}", if dhcp_configured { "RTL8139 (DHCP)" } else if network_available { "RTL8139 (static fallback)" } else { "unavailable" });
     println!("                         Compiler: TinyCC (i386)");
     println!("                         CPU mode: 32-bit protected mode\n");
 

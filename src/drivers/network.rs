@@ -1,7 +1,7 @@
 //! Minimal polling RTL8139 Ethernet driver and IPv4/ARP/ICMP support.
 //!
 //! The default QEMU machine can use `-netdev user,id=n0 -device rtl8139,netdev=n0`.
-//! This intentionally starts with static IPv4 configuration, DNS A lookups,
+//! This uses DHCP with static IPv4 fallback, DNS A lookups,
 //! and ICMP echo; it provides a small, debuggable base for later socket support.
 
 extern crate alloc;
@@ -14,16 +14,20 @@ const PCI_DATA: u16 = 0xCFC;
 const RX_RING_SIZE: usize = 8192 + 16 + 1500;
 const RX_CAPACITY: usize = 2048;
 const TX_CAPACITY: usize = 1536;
-const IP: [u8; 4] = [10, 0, 2, 15];
-const GATEWAY: [u8; 4] = [10, 0, 2, 2];
-const DNS_SERVER: [u8; 4] = [10, 0, 2, 3];
-const MASK: [u8; 4] = [255, 255, 255, 0];
+const DEFAULT_IP: [u8; 4] = [10, 0, 2, 15];
+const DEFAULT_GATEWAY: [u8; 4] = [10, 0, 2, 2];
+const DEFAULT_DNS: [u8; 4] = [10, 0, 2, 3];
+const DEFAULT_MASK: [u8; 4] = [255, 255, 255, 0];
 
 static mut IO_BASE: u16 = 0;
 static mut MAC: [u8; 6] = [0; 6];
 static mut RX_OFFSET: usize = 0;
 static mut TX_INDEX: usize = 0;
 static mut RX_READY: bool = false;
+static mut IP: [u8; 4] = DEFAULT_IP;
+static mut GATEWAY: [u8; 4] = DEFAULT_GATEWAY;
+static mut DNS_SERVER: [u8; 4] = DEFAULT_DNS;
+static mut MASK: [u8; 4] = DEFAULT_MASK;
 #[repr(align(256))]
 struct RxBuffer([u8; RX_RING_SIZE]);
 #[repr(align(256))]
@@ -80,8 +84,10 @@ pub fn network_init() -> bool {
 
 pub fn is_available() -> bool { unsafe { RX_READY } }
 pub fn mac_address() -> [u8; 6] { unsafe { MAC } }
-pub fn ip_address() -> [u8; 4] { IP }
-pub fn netmask() -> [u8; 4] { MASK }
+pub fn ip_address() -> [u8; 4] { unsafe { IP } }
+pub fn netmask() -> [u8; 4] { unsafe { MASK } }
+pub fn gateway() -> [u8; 4] { unsafe { GATEWAY } }
+pub fn dns_server() -> [u8; 4] { unsafe { DNS_SERVER } }
 
 fn transmit(frame: &[u8]) -> bool {
     if frame.len() > TX_CAPACITY || !is_available() { return false; }
@@ -235,8 +241,8 @@ fn send_dns_query(name: &str, id: u16, server_mac: [u8; 6]) -> Result<(), &'stat
     put16(&mut frame, 16, ip_len as u16);
     frame[22] = 64;
     frame[23] = 17;
-    frame[26..30].copy_from_slice(&IP);
-    frame[30..34].copy_from_slice(&DNS_SERVER);
+    frame[26..30].copy_from_slice(&ip_address());
+    frame[30..34].copy_from_slice(&dns_server());
     let ip_checksum = checksum(&frame[14..34]);
     put16(&mut frame, 24, ip_checksum);
     put16(&mut frame, 34, 53000);
@@ -245,6 +251,147 @@ fn send_dns_query(name: &str, id: u16, server_mac: [u8; 6]) -> Result<(), &'stat
     // A zero UDP checksum is valid for IPv4.
     frame[42..42 + dns_len].copy_from_slice(&dns[..dns_len]);
     if transmit(&frame[..frame_len]) { Ok(()) } else { Err("could not send DNS query") }
+}
+
+struct DhcpMessage {
+    kind: u8,
+    address: [u8; 4],
+    server: [u8; 4],
+    mask: Option<[u8; 4]>,
+    router: Option<[u8; 4]>,
+    dns: Option<[u8; 4]>,
+}
+
+fn send_dhcp_message(kind: u8, xid: u32, requested: Option<[u8; 4]>, server: Option<[u8; 4]>) -> bool {
+    let mut dhcp = [0u8; 300];
+    dhcp[0] = 1; // BOOTREQUEST
+    dhcp[1] = 1; // Ethernet
+    dhcp[2] = 6;
+    dhcp[4..8].copy_from_slice(&xid.to_be_bytes());
+    dhcp[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // broadcast replies
+    dhcp[28..34].copy_from_slice(&mac_address());
+    dhcp[236..240].copy_from_slice(&[99, 130, 83, 99]);
+    let mut cursor = 240;
+    dhcp[cursor..cursor + 3].copy_from_slice(&[53, 1, kind]); cursor += 3;
+    if let Some(address) = requested {
+        dhcp[cursor..cursor + 6].copy_from_slice(&[50, 4, address[0], address[1], address[2], address[3]]); cursor += 6;
+    }
+    if let Some(server) = server {
+        dhcp[cursor..cursor + 6].copy_from_slice(&[54, 4, server[0], server[1], server[2], server[3]]); cursor += 6;
+    }
+    dhcp[cursor..cursor + 6].copy_from_slice(&[55, 4, 1, 3, 6, 51]); cursor += 6;
+    dhcp[cursor] = 255;
+    let dhcp_len = cursor + 1;
+    let udp_len = 8 + dhcp_len;
+    let ip_len = 20 + udp_len;
+    let frame_len = 14 + ip_len;
+    let mut frame = [0u8; 400];
+    frame[0..6].fill(0xFF);
+    frame[6..12].copy_from_slice(&mac_address());
+    put16(&mut frame, 12, 0x0800);
+    frame[14] = 0x45;
+    put16(&mut frame, 16, ip_len as u16);
+    frame[22] = 64;
+    frame[23] = 17;
+    frame[30..34].fill(0xFF);
+    let ip_sum = checksum(&frame[14..34]);
+    put16(&mut frame, 24, ip_sum);
+    put16(&mut frame, 34, 68);
+    put16(&mut frame, 36, 67);
+    put16(&mut frame, 38, udp_len as u16);
+    frame[42..42 + dhcp_len].copy_from_slice(&dhcp[..dhcp_len]);
+    transmit(&frame[..frame_len])
+}
+
+fn parse_dhcp_frame(frame: &[u8], xid: u32) -> Option<DhcpMessage> {
+    if frame.len() < 14 + 20 + 8 + 240 || frame[12..14] != 0x0800u16.to_be_bytes() || frame[23] != 17 { return None; }
+    let ihl = (frame[14] as usize & 0x0F) * 4;
+    let udp = 14 + ihl;
+    if ihl < 20 || udp + 8 + 240 > frame.len()
+        || u16::from_be_bytes([frame[udp], frame[udp + 1]]) != 67
+        || u16::from_be_bytes([frame[udp + 2], frame[udp + 3]]) != 68
+    { return None; }
+    let udp_len = u16::from_be_bytes([frame[udp + 4], frame[udp + 5]]) as usize;
+    if udp_len < 8 + 240 || udp + udp_len > frame.len() { return None; }
+    let bootp = &frame[udp + 8..udp + udp_len];
+    if bootp[0] != 2 || u32::from_be_bytes(bootp[4..8].try_into().ok()?) != xid
+        || bootp[236..240] != [99, 130, 83, 99]
+    { return None; }
+    let mut message = DhcpMessage {
+        kind: 0,
+        address: bootp[16..20].try_into().ok()?,
+        server: [0; 4],
+        mask: None,
+        router: None,
+        dns: None,
+    };
+    let mut cursor = 240;
+    while cursor < bootp.len() {
+        let option = bootp[cursor]; cursor += 1;
+        if option == 0 { continue; }
+        if option == 255 { break; }
+        let length = *bootp.get(cursor)? as usize; cursor += 1;
+        let value = bootp.get(cursor..cursor.checked_add(length)?)?;
+        match option {
+            53 if length == 1 => message.kind = value[0],
+            54 if length >= 4 => message.server.copy_from_slice(&value[..4]),
+            1 if length >= 4 => message.mask = Some(value[..4].try_into().ok()?),
+            3 if length >= 4 => message.router = Some(value[..4].try_into().ok()?),
+            6 if length >= 4 => message.dns = Some(value[..4].try_into().ok()?),
+            _ => {}
+        }
+        cursor += length;
+    }
+    Some(message)
+}
+
+fn poll_dhcp(xid: u32) -> Option<DhcpMessage> {
+    unsafe {
+        let base = IO_BASE;
+        if inb(base + 0x37) & 1 != 0 { return None; }
+        let ring = core::ptr::addr_of!(RX_BUFFER.0) as *const u8;
+        let offset = RX_OFFSET;
+        let status = core::ptr::read_unaligned(ring.add(offset) as *const u16);
+        let length = core::ptr::read_unaligned(ring.add(offset + 2) as *const u16) as usize;
+        let message = if status & 1 != 0 && (14..=RX_CAPACITY).contains(&length) {
+            let packet = core::slice::from_raw_parts(ring.add(offset + 4), length);
+            parse_dhcp_frame(packet, xid)
+        } else { None };
+        consume_rx(length);
+        message
+    }
+}
+
+/// Perform the DHCP discover/offer/request/ack exchange. Existing defaults are
+/// retained when no server responds, so the emulator remains usable offline.
+pub fn dhcp_configure(timeout_ticks: u32) -> bool {
+    if !is_available() { return false; }
+    let xid = timer_get_ticks().rotate_left(13) ^ 0x5057_4F53;
+    if !send_dhcp_message(1, xid, None, None) { return false; }
+    let start = timer_get_ticks();
+    let offer = loop {
+        if timer_get_ticks().wrapping_sub(start) >= timeout_ticks { return false; }
+        if let Some(message) = poll_dhcp(xid) {
+            if message.kind == 2 && message.address != [0; 4] { break message; }
+        }
+    };
+    if offer.server == [0; 4] || !send_dhcp_message(3, xid, Some(offer.address), Some(offer.server)) { return false; }
+    let start = timer_get_ticks();
+    loop {
+        if timer_get_ticks().wrapping_sub(start) >= timeout_ticks { return false; }
+        if let Some(message) = poll_dhcp(xid) {
+            if message.kind == 6 { return false; }
+            if message.kind == 5 {
+                unsafe {
+                    IP = message.address;
+                    GATEWAY = message.router.or(offer.router).unwrap_or(DEFAULT_GATEWAY);
+                    DNS_SERVER = message.dns.or(offer.dns).unwrap_or(DEFAULT_DNS);
+                    MASK = message.mask.or(offer.mask).unwrap_or(DEFAULT_MASK);
+                }
+                return true;
+            }
+        }
+    }
 }
 
 fn poll_dns_reply(id: u16) -> Option<Vec<u8>> {
@@ -281,7 +428,7 @@ fn poll_dns_reply(id: u16) -> Option<Vec<u8>> {
 
 pub fn resolve_ipv4(name: &str, timeout_ticks: u32) -> Result<[u8; 4], &'static str> {
     if !is_available() { return Err("no RTL8139 adapter found"); }
-    let server_mac = resolve_mac(DNS_SERVER, timeout_ticks)?;
+    let server_mac = resolve_mac(dns_server(), timeout_ticks)?;
     let id = (timer_get_ticks() as u16) ^ 0x5057;
     send_dns_query(name, id, server_mac)?;
     let start = timer_get_ticks();
@@ -297,7 +444,7 @@ fn send_arp_request(target: [u8; 4]) -> bool {
     let mut f = [0u8; 42];
     f[0..6].fill(0xFF); f[6..12].copy_from_slice(&mac_address()); put16(&mut f, 12, 0x0806);
     put16(&mut f, 14, 1); put16(&mut f, 16, 0x0800); f[18] = 6; f[19] = 4; put16(&mut f, 20, 1);
-    f[22..28].copy_from_slice(&mac_address()); f[28..32].copy_from_slice(&IP); f[38..42].copy_from_slice(&target);
+    f[22..28].copy_from_slice(&mac_address()); f[28..32].copy_from_slice(&ip_address()); f[38..42].copy_from_slice(&target);
     transmit(&f)
 }
 
@@ -305,7 +452,7 @@ fn send_echo_request(destination: [u8; 4], destination_mac: [u8; 6], sequence: u
     let mut f = [0u8; 42];
     f[0..6].copy_from_slice(&destination_mac); f[6..12].copy_from_slice(&mac_address()); put16(&mut f, 12, 0x0800);
     f[14] = 0x45; put16(&mut f, 16, 28); f[22] = 64; f[23] = 1;
-    f[26..30].copy_from_slice(&IP); f[30..34].copy_from_slice(&destination);
+    f[26..30].copy_from_slice(&ip_address()); f[30..34].copy_from_slice(&destination);
     let ip_checksum = checksum(&f[14..34]);
     put16(&mut f, 24, ip_checksum);
     f[34] = 8; put16(&mut f, 38, 0x5057); put16(&mut f, 40, sequence);
@@ -332,19 +479,19 @@ fn poll_packet(target: [u8; 4], sequence: u16) -> bool {
                 let p = core::slice::from_raw_parts(packet, length);
                 // Only answer ARP requests addressed to this host. Replies are
                 // consumed by the caller waiting for neighbor resolution.
-                if p[20] == 0 && p[21] == 1 && p[38..42] == IP {
+                if p[20] == 0 && p[21] == 1 && p[38..42] == ip_address() {
                     let mac = MAC;
                     let mut reply = [0u8; 42]; reply[0..6].copy_from_slice(&p[22..28]);
                     reply[6..12].copy_from_slice(&mac); put16(&mut reply, 12, 0x0806);
                     put16(&mut reply, 14, 1); put16(&mut reply, 16, 0x0800); reply[18] = 6; reply[19] = 4; put16(&mut reply, 20, 2);
-                    reply[22..28].copy_from_slice(&mac); reply[28..32].copy_from_slice(&IP);
+                    reply[22..28].copy_from_slice(&mac); reply[28..32].copy_from_slice(&ip_address());
                     reply[32..38].copy_from_slice(&p[22..28]); reply[38..42].copy_from_slice(&p[28..32]);
                     let _ = transmit(&reply);
                 }
             } else if ether_type == 0x0800 && length >= 42 {
                 let p = core::slice::from_raw_parts(packet, length);
                 if p[23] == 1 && p[34] == 0 && p[35] == 0 && p[38..40] == 0x5057u16.to_be_bytes()
-                    && p[40..42] == sequence.to_be_bytes() && p[30..34] == IP && p[26..30] == target { return true; }
+                    && p[40..42] == sequence.to_be_bytes() && p[30..34] == ip_address() && p[26..30] == target { return true; }
             }
         }
         RX_OFFSET = (offset + length + 4 + 3) & !3;
@@ -356,7 +503,10 @@ fn poll_packet(target: [u8; 4], sequence: u16) -> bool {
 
 pub fn ping(destination: [u8; 4], timeout_ticks: u32) -> Result<(), &'static str> {
     if !is_available() { return Err("no RTL8139 adapter found"); }
-    let next_hop = if destination[0..3] == IP[0..3] { destination } else { GATEWAY };
+    let local_ip = ip_address();
+    let mask = netmask();
+    let same_subnet = (0..4).all(|i| destination[i] & mask[i] == local_ip[i] & mask[i]);
+    let next_hop = if same_subnet { destination } else { gateway() };
     let peer = resolve_mac(next_hop, timeout_ticks)?;
     if !send_echo_request(destination, peer, 1) { return Err("could not send ICMP request"); }
     let start = timer_get_ticks();
@@ -400,7 +550,7 @@ fn send_tcp(
     put16(&mut frame, 18, timer_get_ticks() as u16);
     frame[22] = 64;
     frame[23] = 6;
-    frame[26..30].copy_from_slice(&IP);
+    frame[26..30].copy_from_slice(&ip_address());
     frame[30..34].copy_from_slice(&destination);
     let ip_sum = checksum(&frame[14..34]);
     put16(&mut frame, 24, ip_sum);
@@ -413,7 +563,7 @@ fn send_tcp(
     frame[tcp + 13] = flags;
     put16(&mut frame, tcp + 14, 8192);
     frame[tcp + 20..tcp + tcp_len].copy_from_slice(payload);
-    let tcp_sum = tcp_checksum(IP, destination, &frame[tcp..tcp + tcp_len]);
+    let tcp_sum = tcp_checksum(ip_address(), destination, &frame[tcp..tcp + tcp_len]);
     put16(&mut frame, tcp + 16, tcp_sum);
     transmit(&frame[..frame_len])
 }
@@ -429,7 +579,7 @@ fn poll_tcp(destination: [u8; 4], local_port: u16, remote_port: u16) -> Option<T
         let mut result = None;
         if status & 1 != 0 && (54..=RX_CAPACITY).contains(&length) {
             let packet = core::slice::from_raw_parts(ring.add(offset + 4), length);
-            if packet[12..14] == 0x0800u16.to_be_bytes() && packet[23] == 6 && packet[30..34] == IP {
+            if packet[12..14] == 0x0800u16.to_be_bytes() && packet[23] == 6 && packet[30..34] == ip_address() {
                 let ihl = (packet[14] as usize & 0x0F) * 4;
                 let tcp = 14 + ihl;
                 if ihl >= 20 && tcp + 20 <= length && packet[26..30] == destination
@@ -463,7 +613,7 @@ pub fn http_get(host: &str, path: &str, timeout_ticks: u32) -> Result<Vec<u8>, &
         || host.bytes().any(|b| b == b'\r' || b == b'\n')
     { return Err("invalid HTTP host or path"); }
     let remote = resolve_ipv4(host, timeout_ticks)?;
-    let gateway_mac = resolve_mac(GATEWAY, timeout_ticks)?;
+    let gateway_mac = resolve_mac(gateway(), timeout_ticks)?;
     let source_port = 40000 + (timer_get_ticks() % 20000) as u16;
     let mut local_sequence = (timer_get_ticks() << 16) ^ 0x5057_1337;
     let mut remote_sequence: u32;

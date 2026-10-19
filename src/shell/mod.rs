@@ -316,7 +316,10 @@ fn cmd_ifconfig(_args: &[&str]) {
     let mac = network::mac_address(); let ip = network::ip_address();
     println!("eth0: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     let mask = network::netmask();
-    println!("      inet {}.{}.{}.{}  netmask {}.{}.{}.{}  gateway 10.0.2.2", ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3]);
+    let gateway = network::gateway();
+    let dns = network::dns_server();
+    println!("      inet {}.{}.{}.{}  netmask {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3]);
+    println!("      gateway {}.{}.{}.{}  dns {}.{}.{}.{}", gateway[0], gateway[1], gateway[2], gateway[3], dns[0], dns[1], dns[2], dns[3]);
 }
 
 fn cmd_ping(args: &[&str]) {
