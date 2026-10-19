@@ -40,7 +40,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 |        (core::fmt, alloc::vec::Vec, alloc::string::String)  |
 +-------------------------------------------------------------+
 |                       Device Drivers                        |
-|  VGA 80x25 Text | PS/2 Keyboard | PIT 8253 | CMOS RTC | ATA PIO | COM1|
+|  VGA 80x25 Text | PS/2 Keyboard | PIT 8253 | CMOS RTC | ATA PIO | RTL8139 | COM1|
 +-------------------------------------------------------------+
 |                 x86 Interrupt Subsystem                     |
 |  256-Entry IDT | 8259 PIC Remapper | ISR Stubs & Panic Dump  |
@@ -102,6 +102,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
 - **ATA PIO (`ata.rs`)**: Provides sector access to IDE disks. The primary-master companion data disk supplies video assets and user programs; the primary-slave storage disk backs persistent PweFS data under `/home/`.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
+- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, static IPv4, and ICMP echo for `ifconfig` and `ping`. QEMU `make run` targets attach the adapter to user-mode networking (guest `10.0.2.15`, gateway `10.0.2.2`). This initial stack has no DHCP, DNS, TCP, or UDP yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
 
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
@@ -177,6 +178,8 @@ PweFS uses a fixed on-disk directory table, so the number of entries and path le
 | `uptime` | `uptime` | Displays uptime in minutes and seconds, along with timer ticks |
 | `date` | `date` | Reads and displays current CMOS Real-Time Clock date and time |
 | `cpuinfo` | `cpuinfo` | Queries CPUID to display vendor, brand string, and feature flags |
+| `ifconfig` | `ifconfig` | Displays RTL8139 MAC address and static IPv4 configuration |
+| `ping` | `ping <IPv4>` | Sends one ICMP echo request using ARP and the configured gateway |
 | `meminfo` | `meminfo` | Displays total heap capacity, used bytes, free bytes, and blocks |
 | `history` | `history` | Displays previous commands stored in the shell history buffer |
 | `ls` | `ls [path]` | Lists the current directory or a selected path; directory names end in `/` |

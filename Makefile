@@ -25,6 +25,7 @@ ISO_STAGING = $(BUILD)/iso-staging
 
 DATA_DRIVE = -drive file=$(DATA_IMAGE),format=raw,if=ide,index=0
 STORAGE_DRIVE = -drive file=$(STORAGE_IMAGE),format=raw,if=ide,index=1
+NETWORK_DEVICE ?= -netdev user,id=n0 -device rtl8139,netdev=n0
 
 STORAGE_SIZE = 16M
 
@@ -173,25 +174,25 @@ $(DATA_IMAGE): $(wildcard assets/*.pwevid) $(USER_PROGRAM_ELFS) examples/user_pr
 	python3 tools/pack_data_disk.py assets examples/user_programs.txt $(BUILD) $(TCC_ELF) $(DATA_IMAGE)
 
 run: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_DISPLAY)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(NETWORK_DEVICE) $(QEMU_DISPLAY)
 
 run-fullscreen: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_FULLSCREEN)
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(NETWORK_DEVICE) $(QEMU_FULLSCREEN)
 
 run-curses: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) -display curses
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(NETWORK_DEVICE) -display curses
 
 run-serial: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(QEMU_DISPLAY) -serial stdio
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(NETWORK_DEVICE) $(QEMU_DISPLAY) -serial stdio
 
 run-headless: $(IMAGE) $(DATA_IMAGE) $(STORAGE_IMAGE)
-	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) -display none -serial stdio
+	$(QEMU) -drive file=$(IMAGE),format=raw,if=floppy $(DATA_DRIVE) $(STORAGE_DRIVE) $(NETWORK_DEVICE) -display none -serial stdio
 
 run-iso: iso $(STORAGE_IMAGE)
-	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) -vga std $(QEMU_DISPLAY)
+	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) $(NETWORK_DEVICE) -vga std $(QEMU_DISPLAY)
 
 run-iso-fullscreen: iso $(STORAGE_IMAGE)
-	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) -vga std $(QEMU_FULLSCREEN)
+	$(QEMU) -cdrom $(ISO_IMAGE) -boot d $(STORAGE_DRIVE) $(NETWORK_DEVICE) -vga std $(QEMU_FULLSCREEN)
 
 check:
 	$(CARGO) check

@@ -9,6 +9,7 @@ use crate::arch::io::{inb, outb, outw};
 use crate::drivers::keyboard::{keyboard_getchar, keyboard_has_char, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
 use crate::drivers::framebuffer::{rgb332, Framebuffer};
 use crate::drivers::rtc::rtc_get_datetime;
+use crate::drivers::network;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
 use crate::drivers::vga::{
     vga_begin_capture, vga_clear, vga_end_capture, vga_putchar, vga_set_color,
@@ -156,6 +157,8 @@ static COMMANDS: &[Command] = &[
         desc: "Display CPU hardware details via CPUID",
         handler: cmd_cpuinfo,
     },
+    Command { name: "ifconfig", desc: "Show network adapter and IPv4 configuration", handler: cmd_ifconfig },
+    Command { name: "ping", desc: "Send an IPv4 ICMP echo request: ping a.b.c.d", handler: cmd_ping },
     Command {
         name: "meminfo",
         desc: "Display kernel heap memory statistics",
@@ -305,6 +308,27 @@ fn cmd_help(_args: &[&str]) {
     });
     println!("Run a program by name, or use exec <path> [arguments...].");
     println!("-----------------------:3----------------------------");
+}
+
+fn cmd_ifconfig(_args: &[&str]) {
+    if !network::is_available() { println!("No RTL8139 network adapter. Start QEMU with -netdev user,id=n0 -device rtl8139,netdev=n0"); return; }
+    let mac = network::mac_address(); let ip = network::ip_address();
+    println!("eth0: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    let mask = network::netmask();
+    println!("      inet {}.{}.{}.{}  netmask {}.{}.{}.{}  gateway 10.0.2.2", ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3]);
+}
+
+fn cmd_ping(args: &[&str]) {
+    if args.len() != 2 { println!("Usage: ping a.b.c.d"); return; }
+    let mut ip = [0u8; 4]; let mut parts = args[1].split('.');
+    for octet in &mut ip {
+        let Some(part) = parts.next() else { println!("ping: invalid IPv4 address"); return; };
+        let Ok(value) = part.parse::<u8>() else { println!("ping: invalid IPv4 address"); return; };
+        *octet = value;
+    }
+    if parts.next().is_some() { println!("ping: invalid IPv4 address"); return; }
+    print!("PING {}.{}.{}.{} ... ", ip[0], ip[1], ip[2], ip[3]);
+    match network::ping(ip, 200) { Ok(()) => println!("reply received"), Err(error) => println!("{}", error) }
 }
 
 fn cmd_clear(_args: &[&str]) {
