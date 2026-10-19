@@ -229,6 +229,7 @@ pub fn keyboard_has_char() -> bool {
 
 pub fn keyboard_getchar() -> u8 {
     loop {
+        crate::drivers::network::dhcp_maintenance();
         // First check serial port
         if serial_has_byte() {
             let mut c = serial_getchar();

@@ -28,6 +28,9 @@ static mut IP: [u8; 4] = DEFAULT_IP;
 static mut GATEWAY: [u8; 4] = DEFAULT_GATEWAY;
 static mut DNS_SERVER: [u8; 4] = DEFAULT_DNS;
 static mut MASK: [u8; 4] = DEFAULT_MASK;
+static mut DHCP_SERVER: [u8; 4] = [0; 4];
+static mut DHCP_LEASE_SECONDS: u32 = 0;
+static mut DHCP_RENEW_AT: u32 = 0;
 #[repr(align(256))]
 struct RxBuffer([u8; RX_RING_SIZE]);
 #[repr(align(256))]
@@ -260,6 +263,7 @@ struct DhcpMessage {
     mask: Option<[u8; 4]>,
     router: Option<[u8; 4]>,
     dns: Option<[u8; 4]>,
+    lease_seconds: Option<u32>,
 }
 
 fn send_dhcp_message(kind: u8, xid: u32, requested: Option<[u8; 4]>, server: Option<[u8; 4]>) -> bool {
@@ -324,6 +328,7 @@ fn parse_dhcp_frame(frame: &[u8], xid: u32) -> Option<DhcpMessage> {
         mask: None,
         router: None,
         dns: None,
+        lease_seconds: None,
     };
     let mut cursor = 240;
     while cursor < bootp.len() {
@@ -338,6 +343,7 @@ fn parse_dhcp_frame(frame: &[u8], xid: u32) -> Option<DhcpMessage> {
             1 if length >= 4 => message.mask = Some(value[..4].try_into().ok()?),
             3 if length >= 4 => message.router = Some(value[..4].try_into().ok()?),
             6 if length >= 4 => message.dns = Some(value[..4].try_into().ok()?),
+            51 if length == 4 => message.lease_seconds = Some(u32::from_be_bytes(value[..4].try_into().ok()?)),
             _ => {}
         }
         cursor += length;
@@ -383,15 +389,86 @@ pub fn dhcp_configure(timeout_ticks: u32) -> bool {
             if message.kind == 6 { return false; }
             if message.kind == 5 {
                 unsafe {
-                    IP = message.address;
+                    IP = if message.address == [0; 4] { offer.address } else { message.address };
                     GATEWAY = message.router.or(offer.router).unwrap_or(DEFAULT_GATEWAY);
                     DNS_SERVER = message.dns.or(offer.dns).unwrap_or(DEFAULT_DNS);
                     MASK = message.mask.or(offer.mask).unwrap_or(DEFAULT_MASK);
+                    DHCP_SERVER = offer.server;
+                    DHCP_LEASE_SECONDS = message.lease_seconds.or(offer.lease_seconds).unwrap_or(3600);
+                    let lease = DHCP_LEASE_SECONDS;
+                    DHCP_RENEW_AT = if lease == u32::MAX { 0 } else { timer_get_ticks().wrapping_add((lease / 2).saturating_mul(100)) };
                 }
                 return true;
             }
         }
     }
+}
+
+fn send_dhcp_renew(xid: u32, server: [u8; 4], server_mac: [u8; 6]) -> bool {
+    let mut dhcp = [0u8; 280];
+    dhcp[0] = 1; dhcp[1] = 1; dhcp[2] = 6;
+    dhcp[4..8].copy_from_slice(&xid.to_be_bytes());
+    dhcp[12..16].copy_from_slice(&ip_address()); // ciaddr: renewing an active lease
+    dhcp[28..34].copy_from_slice(&mac_address());
+    dhcp[236..240].copy_from_slice(&[99, 130, 83, 99]);
+    dhcp[240..246].copy_from_slice(&[53, 1, 3, 55, 4, 1]);
+    dhcp[246..249].copy_from_slice(&[3, 6, 51]);
+    dhcp[249] = 255;
+    let dhcp_len = 250;
+    let udp_len = 8 + dhcp_len;
+    let ip_len = 20 + udp_len;
+    let frame_len = 14 + ip_len;
+    let mut frame = [0u8; 320];
+    frame[0..6].copy_from_slice(&server_mac);
+    frame[6..12].copy_from_slice(&mac_address());
+    put16(&mut frame, 12, 0x0800);
+    frame[14] = 0x45;
+    put16(&mut frame, 16, ip_len as u16);
+    frame[22] = 64; frame[23] = 17;
+    frame[26..30].copy_from_slice(&ip_address());
+    frame[30..34].copy_from_slice(&server);
+    let ip_sum = checksum(&frame[14..34]);
+    put16(&mut frame, 24, ip_sum);
+    put16(&mut frame, 34, 68); put16(&mut frame, 36, 67); put16(&mut frame, 38, udp_len as u16);
+    frame[42..42 + dhcp_len].copy_from_slice(&dhcp[..dhcp_len]);
+    transmit(&frame[..frame_len])
+}
+
+/// Renew a DHCP lease when its T1 time arrives. Called while keyboard input is
+/// idle, so ordinary packet handling and commands remain responsive.
+pub fn dhcp_maintenance() {
+    let now = timer_get_ticks();
+    let (renew_at, server) = unsafe { (DHCP_RENEW_AT, DHCP_SERVER) };
+    if !is_available() || renew_at == 0 || now.wrapping_sub(renew_at) >= 0x8000_0000 { return; }
+    let Some(server_mac) = resolve_mac(server, 100).ok() else {
+        unsafe { DHCP_RENEW_AT = timer_get_ticks().wrapping_add(6000); }
+        return;
+    };
+    let xid = timer_get_ticks().rotate_left(9) ^ 0x5245_4E45;
+    if !send_dhcp_renew(xid, server, server_mac) {
+        unsafe { DHCP_RENEW_AT = timer_get_ticks().wrapping_add(6000); }
+        return;
+    }
+    let start = timer_get_ticks();
+    while timer_get_ticks().wrapping_sub(start) < 100 {
+        if let Some(message) = poll_dhcp(xid) {
+            if message.kind == 5 {
+                unsafe {
+                    if message.address != [0; 4] { IP = message.address; }
+                    if let Some(mask) = message.mask { MASK = mask; }
+                    if let Some(router) = message.router { GATEWAY = router; }
+                    if let Some(dns) = message.dns { DNS_SERVER = dns; }
+                    DHCP_LEASE_SECONDS = message.lease_seconds.unwrap_or(DHCP_LEASE_SECONDS);
+                    DHCP_RENEW_AT = if DHCP_LEASE_SECONDS == u32::MAX { 0 } else {
+                        timer_get_ticks().wrapping_add((DHCP_LEASE_SECONDS / 2).saturating_mul(100))
+                    };
+                }
+                return;
+            }
+            if message.kind == 6 { break; }
+        }
+    }
+    unsafe { DHCP_RENEW_AT = timer_get_ticks().wrapping_add(6000); }
 }
 
 fn poll_dns_reply(id: u16) -> Option<Vec<u8>> {

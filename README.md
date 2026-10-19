@@ -102,7 +102,7 @@ PweOS is built from the ground up in freestanding Rust without external operatin
 - **CMOS Real-Time Clock (`rtc.rs`)**: Reads hardware RTC registers with BCD conversion, 12h/24h detection, and status checking for accurate wall-clock timestamps.
 - **ATA PIO (`ata.rs`)**: Provides sector access to IDE disks. The primary-master companion data disk supplies video assets and user programs; the primary-slave storage disk backs persistent PweFS data under `/home/`.
 - **CPUID Detection (`cpu.rs`)**: Queries CPU vendor string, processor model/brand string, family/stepping, and hardware capability flags.
-- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
+- **RTL8139 Ethernet (`network.rs`)**: Polls the PCI RTL8139 adapter and implements Ethernet, ARP, DHCP IPv4 configuration and lease renewal, DNS A lookups, UDP DNS queries, ICMP echo, and a minimal TCP client for plain HTTP on port 80. QEMU `make run` targets attach the adapter to user-mode networking. Static QEMU defaults remain in place if no DHCP server responds. TLS/HTTPS and general-purpose sockets are not available yet. For a direct QEMU launch, add `-netdev user,id=n0 -device rtl8139,netdev=n0`.
 
 ### 8. Interactive Shell (`src/shell/`)
 - Colored prompt (`pweos> `) with backspace character deletion.
