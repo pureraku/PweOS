@@ -9,6 +9,7 @@ use crate::arch::io::{inb, outb, outw};
 use crate::drivers::keyboard::{keyboard_getchar, keyboard_has_char, KEY_DELETE, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP};
 use crate::drivers::framebuffer::{rgb332, Framebuffer};
 use crate::drivers::rtc::rtc_get_datetime;
+use crate::drivers::network;
 use crate::drivers::timer::{timer_get_ticks, timer_get_uptime_seconds, timer_sleep};
 use crate::drivers::vga::{
     vga_begin_capture, vga_clear, vga_end_capture, vga_putchar, vga_set_color,
@@ -156,6 +157,9 @@ static COMMANDS: &[Command] = &[
         desc: "Display CPU hardware details via CPUID",
         handler: cmd_cpuinfo,
     },
+    Command { name: "ifconfig", desc: "Show network adapter and IPv4 configuration", handler: cmd_ifconfig },
+    Command { name: "ping", desc: "Ping an IPv4 address or DNS hostname", handler: cmd_ping },
+    Command { name: "curl", desc: "HTTP client: GET, POST, headers, and downloads", handler: cmd_curl },
     Command {
         name: "meminfo",
         desc: "Display kernel heap memory statistics",
@@ -305,6 +309,190 @@ fn cmd_help(_args: &[&str]) {
     });
     println!("Run a program by name, or use exec <path> [arguments...].");
     println!("-----------------------:3----------------------------");
+}
+
+fn cmd_ifconfig(_args: &[&str]) {
+    if !network::is_available() { println!("No RTL8139 network adapter. Start QEMU with -netdev user,id=n0 -device rtl8139,netdev=n0"); return; }
+    let mac = network::mac_address(); let ip = network::ip_address();
+    println!("eth0: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    let mask = network::netmask();
+    let gateway = network::gateway();
+    let dns = network::dns_server();
+    println!("      inet {}.{}.{}.{}  netmask {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3]);
+    println!("      gateway {}.{}.{}.{}  dns {}.{}.{}.{}", gateway[0], gateway[1], gateway[2], gateway[3], dns[0], dns[1], dns[2], dns[3]);
+}
+
+fn cmd_ping(args: &[&str]) {
+    if args.len() != 2 { println!("Usage: ping <IPv4 address or hostname>"); return; }
+    let mut ip = [0u8; 4];
+    let mut numeric = true;
+    let mut parts = args[1].split('.');
+    for octet in &mut ip {
+        let Some(part) = parts.next() else { numeric = false; break; };
+        let Ok(value) = part.parse::<u8>() else { numeric = false; break; };
+        *octet = value;
+    }
+    if parts.next().is_some() { numeric = false; }
+    if !numeric {
+        print!("Resolving {} ... ", args[1]);
+        match network::resolve_ipv4(args[1], 200) {
+            Ok(address) => {
+                ip = address;
+                println!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
+            }
+            Err(error) => { println!("{}", error); return; }
+        }
+    }
+    print!("PING {}.{}.{}.{} ... ", ip[0], ip[1], ip[2], ip[3]);
+    match network::ping(ip, 200) { Ok(()) => println!("reply received"), Err(error) => println!("{}", error) }
+}
+
+fn parse_http_url(url: &str) -> Result<(String, String), &'static str> {
+    if url.starts_with("https://") { return Err("HTTPS/TLS is not supported yet (plain HTTP only)"); }
+    let url = url.strip_prefix("http://").ok_or("URL must start with http://")?;
+    let split = url.find(|ch| ch == '/' || ch == '?').unwrap_or(url.len());
+    let host = &url[..split];
+    if host.is_empty() { return Err("URL must include a hostname"); }
+    if host.contains(':') { return Err("custom ports are not supported (HTTP uses port 80)"); }
+    let path = if split == url.len() { String::from("/") }
+        else if url.as_bytes()[split] == b'?' { alloc::format!("/{}", &url[split..]) }
+        else { String::from(&url[split..]) };
+    Ok((String::from(host), path))
+}
+
+fn curl_save(path: &str, body: &[u8]) -> Result<(), &'static str> {
+    let output_path = resolve_path(path);
+    if ramfs_is_dir(&output_path) { return Err("output path is a directory"); }
+    if ramfs_read(&output_path).is_none() && !ramfs_create(&output_path, b"") {
+        return Err("could not create output file");
+    }
+    if !ramfs_write(&output_path, body, false) { return Err("could not write output file"); }
+    println!("saved {} bytes to {}", body.len(), output_path);
+    Ok(())
+}
+
+fn curl_option_value(args: &[&str], option_index: usize) -> Result<(String, usize), &'static str> {
+    let Some(first) = args.get(option_index + 1) else { return Err("option needs an argument"); };
+    let quote = first.as_bytes().first().copied().filter(|byte| *byte == b'\'' || *byte == b'"');
+    let mut value = String::from(*first);
+    let mut consumed = 1;
+    if let Some(quote) = quote {
+        while value.as_bytes().last().copied() != Some(quote) || value.len() == 1 {
+            let Some(next) = args.get(option_index + 1 + consumed) else { return Err("unterminated quoted option value"); };
+            value.push(' ');
+            value.push_str(next);
+            consumed += 1;
+        }
+        value = String::from(&value[1..value.len() - 1]);
+    }
+    Ok((value, consumed))
+}
+
+fn cmd_curl(args: &[&str]) {
+    let mut output: Option<String> = None;
+    let mut remote_name = false;
+    let mut include_headers = false;
+    let mut head = false;
+    let mut follow = false;
+    let mut fail = false;
+    let mut method: Option<String> = None;
+    let mut data: Option<String> = None;
+    let mut headers: Vec<String> = Vec::new();
+    let mut url: Option<&str> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i] {
+            "-o" | "--output" | "-X" | "--request" | "-d" | "--data" | "--data-raw" | "-H" | "--header" => {
+                let (value, consumed) = match curl_option_value(args, i) {
+                    Ok(value) => value,
+                    Err(error) => { println!("curl: {}: {}", args[i], error); return; }
+                };
+                match args[i] {
+                    "-o" | "--output" => output = Some(value),
+                    "-X" | "--request" => method = Some(value),
+                    "-d" | "--data" | "--data-raw" => data = Some(value),
+                    _ => headers.push(value),
+                }
+                i += consumed + 1;
+            }
+            "-O" | "--remote-name" => { remote_name = true; i += 1; }
+            "-I" | "--head" => { head = true; i += 1; }
+            "-i" | "--include" => { include_headers = true; i += 1; }
+            "-L" | "--location" => { follow = true; i += 1; }
+            "-f" | "--fail" => { fail = true; i += 1; }
+            "-s" | "--silent" | "--show-error" => { i += 1; }
+            option if option.starts_with('-') => { println!("curl: unsupported option '{}'", option); return; }
+            value if url.is_none() => { url = Some(value); i += 1; }
+            value => { println!("curl: unexpected argument '{}'", value); return; }
+        }
+    }
+    let Some(initial_url) = url else {
+        println!("Usage: curl [options] <http-url>\n  -o, --output <file>       save response body\n  -O, --remote-name         save using the URL filename\n  -d, --data <data>         send data (POST by default)\n  -H, --header <header>     add a header (Name:value)\n  -X, --request <method>    set method (GET, POST, PUT, etc.)\n  -I, --head                request headers using HEAD\n  -i, --include             print response headers and body\n  -L, --location            follow up to 5 redirects\n  -f, --fail                error for HTTP status >= 400");
+        return;
+    };
+    if remote_name && output.is_some() { println!("curl: use either -o or -O, not both"); return; }
+    let output = if remote_name {
+        let (_, path) = match parse_http_url(initial_url) {
+            Ok(parts) => parts,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        let filename = path.split('?').next().unwrap_or(&path).rsplit('/').next().unwrap_or("");
+        if filename.is_empty() { println!("curl: URL has no filename; use -o <file>"); return; }
+        Some(String::from(filename))
+    } else { output };
+    let mut current_url = String::from(initial_url);
+    let selected_method = method.as_deref().unwrap_or(if head { "HEAD" } else if data.is_some() { "POST" } else { "GET" });
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let mut redirects = 0;
+    let response = loop {
+        let (host, path) = match parse_http_url(&current_url) {
+            Ok(parts) => parts,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        let response = match network::http_request_with_body(&host, &path, selected_method, &header_refs,
+            data.as_deref().unwrap_or("").as_bytes(), 300) {
+            Ok(response) => response,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        let status = match network::http_status(&response) {
+            Ok(status) => status,
+            Err(error) => { println!("curl: {}", error); return; }
+        };
+        if follow && (300..400).contains(&status) {
+            if redirects >= 5 { println!("curl: too many redirects"); return; }
+            if let Some(location) = network::http_location(&response) {
+                current_url = if location.starts_with("http://") || location.starts_with("https://") {
+                    String::from(location)
+                } else if location.starts_with('/') {
+                    alloc::format!("http://{}{}", host, location)
+                } else {
+                    let base = path.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+                    alloc::format!("http://{}{}/{}", host, base, location)
+                };
+                redirects += 1;
+                continue;
+            }
+        }
+        if fail && status >= 400 { println!("curl: HTTP status {}", status); return; }
+        break response;
+    };
+    if head || include_headers {
+        let end = response.windows(4).position(|window| window == b"\r\n\r\n")
+            .map(|offset| offset + 4).unwrap_or(response.len());
+        if let Ok(headers) = core::str::from_utf8(&response[..end]) { print!("{}", headers); }
+    }
+    if head { return; }
+    let body = match network::http_response_body(&response) {
+        Ok(body) => body,
+        Err(error) => { println!("curl: {}", error); return; }
+    };
+    if let Some(output) = output {
+        if let Err(error) = curl_save(&output, &body) { println!("curl: {}", error); }
+    } else if let Ok(text) = core::str::from_utf8(&body) {
+        print!("{}", text);
+    } else {
+        println!("curl: binary response; use -o <file> to save it ({} bytes)", body.len());
+    }
 }
 
 fn cmd_clear(_args: &[&str]) {
