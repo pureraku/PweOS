@@ -214,6 +214,7 @@ pub fn ramfs_init() {
         "readme.txt",
         b"PweOS includes heap memory, RTC, CPUID, RAMFS, and shell commands!\nType 'help' to see all commands.\n",
     );
+    fs.create("demo.c", include_bytes!("../../demo.c"));
     fs.create("cat.art", 
             br#"
      /\_/\  
